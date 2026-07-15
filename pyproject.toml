@@ -1,0 +1,140 @@
+[project]
+name = "onchain-platform"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "alembic>=1.18.5",
+    "fastapi>=0.139.0",
+    "httpx>=0.28.1",
+    "polars>=1.42.1",
+    "pydantic>=2.13.4",
+    "redis>=8.0.1",
+    "sqlalchemy>=2.0.51",
+    "streamlit>=1.59.2",
+    "structlog>=26.1.0",
+    "uvicorn>=0.51.0",
+    "web3>=7.16.0",
+]
+
+[project.scripts]
+onchain-platform = "onchain_platform:main"
+
+[build-system]
+requires = ["uv_build>=0.11.28,<0.12.0"]
+build-backend = "uv_build"
+
+[tool.importlinter]
+root_package = "onchain_platform"
+
+[[tool.importlinter.contracts]]
+name = "Capability dependency order (DOC-009 Capability Dependencies)"
+type = "layers"
+layers = [
+    "onchain_platform.strategy",
+    "onchain_platform.research",
+    "onchain_platform.intelligence",
+    "onchain_platform.analytics",
+    "onchain_platform.domain_management",
+    "onchain_platform.processing",
+    "onchain_platform.acquisition",
+    "onchain_platform.domain",
+]
+
+[[tool.importlinter.contracts]]
+name = "Data Processing may only depend on Data Acquisition"
+type = "forbidden"
+source_modules = ["onchain_platform.processing"]
+forbidden_modules = [
+    "onchain_platform.domain_management",
+    "onchain_platform.analytics",
+    "onchain_platform.intelligence",
+    "onchain_platform.research",
+    "onchain_platform.strategy",
+]
+
+[[tool.importlinter.contracts]]
+name = "Domain Management may only depend on Data Processing"
+type = "forbidden"
+source_modules = ["onchain_platform.domain_management"]
+forbidden_modules = [
+    "onchain_platform.acquisition",
+    "onchain_platform.analytics",
+    "onchain_platform.intelligence",
+    "onchain_platform.research",
+    "onchain_platform.strategy",
+]
+
+[[tool.importlinter.contracts]]
+name = "Market Analytics may only depend on Data Processing and Domain Management"
+type = "forbidden"
+source_modules = ["onchain_platform.analytics"]
+forbidden_modules = [
+    "onchain_platform.acquisition",
+    "onchain_platform.intelligence",
+    "onchain_platform.research",
+    "onchain_platform.strategy",
+]
+
+[[tool.importlinter.contracts]]
+name = "Intelligence may only depend on Market Analytics and Domain Management"
+type = "forbidden"
+source_modules = ["onchain_platform.intelligence"]
+forbidden_modules = [
+    "onchain_platform.acquisition",
+    "onchain_platform.processing",
+    "onchain_platform.research",
+    "onchain_platform.strategy",
+]
+
+[[tool.importlinter.contracts]]
+name = "Research Platform may only depend on Market Analytics and Intelligence"
+type = "forbidden"
+source_modules = ["onchain_platform.research"]
+forbidden_modules = [
+    "onchain_platform.acquisition",
+    "onchain_platform.processing",
+    "onchain_platform.domain_management",
+    "onchain_platform.strategy",
+]
+
+[[tool.importlinter.contracts]]
+name = "Strategy may only depend on Research Platform"
+type = "forbidden"
+source_modules = ["onchain_platform.strategy"]
+forbidden_modules = [
+    "onchain_platform.acquisition",
+    "onchain_platform.processing",
+    "onchain_platform.domain_management",
+    "onchain_platform.analytics",
+    "onchain_platform.intelligence",
+]
+
+[[tool.importlinter.contracts]]
+name = "Cross-cutting infrastructure never imports a Capability package"
+type = "forbidden"
+source_modules = [
+    "onchain_platform.persistence",
+    "onchain_platform.transport",
+    "onchain_platform.platform",
+]
+forbidden_modules = [
+    "onchain_platform.acquisition",
+    "onchain_platform.processing",
+    "onchain_platform.domain_management",
+    "onchain_platform.analytics",
+    "onchain_platform.intelligence",
+    "onchain_platform.research",
+    "onchain_platform.strategy",
+]
+
+[dependency-groups]
+dev = [
+    "hypothesis>=6.156.6",
+    "import-linter>=2.13",
+    "mypy>=2.3.0",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.15.21",
+]
