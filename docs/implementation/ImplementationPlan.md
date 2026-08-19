@@ -1,7 +1,7 @@
 ---
 title: Implementation Plan — Where We Are, Where To Start
 status: Living document — update as milestones close, not as a new DOC-xxx
-last_updated: 2026-07-13
+last_updated: 2026-08-19
 scope: This file sits outside the DOC-001…015 / ADR-006 series on purpose. Those documents define what the platform is. This one answers a single, narrower question — what do you actually open first, in what order, and how do you know each step is really done.
 ---
 
@@ -62,10 +62,10 @@ Nothing here is a design decision — everything below was already decided in DO
 - `domain/schemas/blockchain_fact.py`, `domain/schemas/enums.py` — typed directly from DOC-012 § B.1. This file should require zero new decisions; if it does, that's a sign DOC-012 has a gap worth returning to fix there, not patching locally.
 
 **Definition of done:**
-- [ ] A real `PairCreated` event on Base produces a real row, correct in every field.
-- [ ] Running the same block range twice produces the same row, not a duplicate — idempotency (ADR-006) via the natural key, proven, not assumed.
-- [ ] The first Replay Test exists: `tests/replay/fixtures/` has one small, fixed, real block range; `tests/replay/test_replay.py` runs it through the live pipeline and asserts the output. It only needs to cover `PairCreated` right now — it grows with every later milestone, it does not need to be complete today.
-- [ ] `lint-imports` still passes.
+- [x] A real `PairCreated` event on Base produces a real row, correct in every field.
+- [x] Running the same block range twice produces the same row, not a duplicate — idempotency (ADR-006) via the natural key, proven, not assumed.
+- [x] The first Replay Test exists: `tests/replay/fixtures/` has one small, fixed, real block range; `tests/replay/test_replay.py` runs it through the live pipeline and asserts the output. It only needs to cover `PairCreated` right now — it grows with every later milestone, it does not need to be complete today.
+- [x] `lint-imports` still passes.
 
 ---
 

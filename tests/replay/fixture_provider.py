@@ -21,8 +21,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from onchain_platform.acquisition.providers.base import (
-    BlockMetadata,
     BlockchainProvider,
+    BlockMetadata,
     RawLog,
 )
 from onchain_platform.domain.exceptions import AcquisitionError

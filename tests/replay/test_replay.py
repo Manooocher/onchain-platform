@@ -23,8 +23,11 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from onchain_platform.acquisition.collector import Collector, CollectedLog
-from onchain_platform.domain.schemas.blockchain_fact import BlockchainFact
+from onchain_platform.acquisition.collector import CollectedLog, Collector
+from onchain_platform.domain.schemas.blockchain_fact import (
+    BlockchainFact,
+    PairCreatedPayload,
+)
 from onchain_platform.persistence.postgres import repositories
 from onchain_platform.processing.fact_processor import FactProcessor
 from tests.replay.fixture_provider import FIXTURES_DIR, FixtureProvider
@@ -38,9 +41,7 @@ DEX = "uniswap_v2"
 # independently during planning from the raw captured eth_getLogs entry
 # (Milestone1-ExecutionPlan § Open Decisions), NOT from running the
 # pipeline. Checksum forms verified directly against eth_utils.
-SAMPLE_FACT_ID = (
-    "8453:0xfc6bbb0b00fc647da45dd294ca6355f8f687f2c1ca132f0198d13f3796f54fbd:43"
-)
+SAMPLE_FACT_ID = "8453:0xfc6bbb0b00fc647da45dd294ca6355f8f687f2c1ca132f0198d13f3796f54fbd:43"
 SAMPLE_TX_HASH = "0xfc6bbb0b00fc647da45dd294ca6355f8f687f2c1ca132f0198d13f3796f54fbd"
 SAMPLE_BLOCK_HASH = "0xf7688420b215b621c41d64ec128184809fb3249bc1e70a07d8d197d94e821a41"
 SAMPLE_EVENT_TIME = datetime(2024, 4, 22, 12, 35, 55, tzinfo=UTC)
@@ -64,9 +65,7 @@ async def _run_pipeline(provider: FixtureProvider) -> list[BlockchainFact]:
     pinned to the fixture's own constants: replay determinism (ADR-006
     Principle 2; DOC-013 § Determinism Discipline — no wall-clock reads in
     Capabilities)."""
-    processor = FactProcessor(
-        chain_id=provider.chain_id, clock=lambda: provider.ingested_at
-    )
+    processor = FactProcessor(chain_id=provider.chain_id, clock=lambda: provider.ingested_at)
     facts: list[BlockchainFact] = []
 
     async def handler(collected: CollectedLog) -> None:
@@ -111,10 +110,12 @@ async def test_replay_pair_created_produces_expected_facts_byte_identical() -> N
     assert sample.ingested_at == provider.ingested_at
     assert sample.confirmation_status.value == "PENDING"
     assert sample.confirmations == 0
-    assert sample.payload.pair_address == SAMPLE_PAIR
-    assert sample.payload.token0_address == SAMPLE_TOKEN0
-    assert sample.payload.token1_address == SAMPLE_TOKEN1
-    assert sample.payload.dex == DEX
+    payload = sample.payload
+    assert isinstance(payload, PairCreatedPayload)
+    assert payload.pair_address == SAMPLE_PAIR
+    assert payload.token0_address == SAMPLE_TOKEN0
+    assert payload.token1_address == SAMPLE_TOKEN1
+    assert payload.dex == DEX
 
 
 async def test_replay_second_run_is_byte_identical() -> None:
@@ -136,9 +137,7 @@ async def test_replay_into_real_postgres_is_idempotent(
     # Idempotency), against REAL Postgres (DOC-010 § Integration Tests).
     await clean_facts()
     provider = _load_fixture()
-    processor = FactProcessor(
-        chain_id=provider.chain_id, clock=lambda: provider.ingested_at
-    )
+    processor = FactProcessor(chain_id=provider.chain_id, clock=lambda: provider.ingested_at)
 
     async def handler(collected: CollectedLog) -> None:
         fact = processor.process(collected)
@@ -184,5 +183,7 @@ async def test_replay_into_real_postgres_is_idempotent(
     sample = next(f for f in rows_second if f.fact_id == SAMPLE_FACT_ID)
     assert sample.block_hash == SAMPLE_BLOCK_HASH
     assert sample.event_time == SAMPLE_EVENT_TIME
-    assert sample.payload.token0_address == SAMPLE_TOKEN0
-    assert sample.payload.pair_address == SAMPLE_PAIR
+    sample_payload = sample.payload
+    assert isinstance(sample_payload, PairCreatedPayload)
+    assert sample_payload.token0_address == SAMPLE_TOKEN0
+    assert sample_payload.pair_address == SAMPLE_PAIR

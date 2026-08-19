@@ -21,7 +21,7 @@ Usage:
 import argparse
 import asyncio
 import json
-from datetime import UTC, datetime
+from datetime import UTC
 from pathlib import Path
 
 from onchain_platform.acquisition.providers.local_node import LocalNodeProvider
@@ -95,8 +95,7 @@ def main() -> None:
     FIXTURE_PATH.parent.mkdir(parents=True, exist_ok=True)
     FIXTURE_PATH.write_text(json.dumps(fixture, indent=2, sort_keys=True) + "\n")
     log_count = len(fixture["logs"])  # type: ignore[arg-type]
-    print(f"wrote {FIXTURE_PATH} ({log_count} logs, "
-          f"blocks {FROM_BLOCK}..{TO_BLOCK})")
+    print(f"wrote {FIXTURE_PATH} ({log_count} logs, blocks {FROM_BLOCK}..{TO_BLOCK})")
     if log_count == 0:
         raise SystemExit("fixture contains no logs — range selection is wrong")
 

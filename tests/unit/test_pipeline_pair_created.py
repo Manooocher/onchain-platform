@@ -8,14 +8,15 @@ the provider abstraction — never deeper. Determinism (DOC-013): the clock
 is injected and pinned, so expected outputs are byte-exact constants.
 """
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 
 import pytest
 
-from onchain_platform.acquisition.collector import Collector, CollectedLog
+from onchain_platform.acquisition.collector import CollectedLog, Collector
 from onchain_platform.acquisition.providers.base import (
-    BlockMetadata,
     BlockchainProvider,
+    BlockMetadata,
     RawLog,
 )
 from onchain_platform.domain.exceptions import AcquisitionError, DomainValidationError
@@ -93,7 +94,7 @@ class FakeProvider(BlockchainProvider):
         from_block: int,
         to_block: int,
         address: str | None = None,
-        topics: list[str] | None = None,
+        topics: Sequence[str] | None = None,
     ) -> list[RawLog]:
         self.get_logs_calls.append((from_block, to_block))
         assert address == FACTORY
@@ -146,9 +147,15 @@ async def test_collector_process_range_forwards_matching_logs_in_order() -> None
 
 
 async def test_collector_process_range_empty_blocks_forward_nothing() -> None:
-    provider = FakeProvider(blocks={100: BlockMetadata(
-        number=100, hash="0x" + "11" * 32, timestamp=datetime(2024, 1, 1, tzinfo=UTC)
-    )}, logs_by_block={}, head=100)
+    provider = FakeProvider(
+        blocks={
+            100: BlockMetadata(
+                number=100, hash="0x" + "11" * 32, timestamp=datetime(2024, 1, 1, tzinfo=UTC)
+            )
+        },
+        logs_by_block={},
+        head=100,
+    )
     received: list[CollectedLog] = []
     collector = make_collector(provider, received)
 
@@ -217,7 +224,9 @@ def test_fact_processor_produces_exact_pending_fact_for_real_sample() -> None:
     # Every field byte-exact against the plan's captured constants —
     # this is the deterministic core Milestone 1 proves (ADR-006
     # Principle 2: identical inputs → identical outputs).
-    assert fact.fact_id == "8453:0xfc6bbb0b00fc647da45dd294ca6355f8f687f2c1ca132f0198d13f3796f54fbd:43"
+    assert (
+        fact.fact_id == "8453:0xfc6bbb0b00fc647da45dd294ca6355f8f687f2c1ca132f0198d13f3796f54fbd:43"
+    )
     assert fact.schema_version == "1.0"
     assert fact.chain_id == BASE_CHAIN_ID
     assert fact.fact_type == FactType.PAIR_CREATED
