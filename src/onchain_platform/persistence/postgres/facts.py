@@ -17,7 +17,6 @@ from datetime import datetime
 from sqlalchemy import (
     BigInteger,
     CheckConstraint,
-    Column,
     DateTime,
     Enum,
     Index,
@@ -66,9 +65,7 @@ class BlockchainFactRow(Base):
     log_index: Mapped[int] = mapped_column(BigInteger, nullable=False)
     # Triple Timestamp Standard — always TIMESTAMPTZ, never bare TIMESTAMP
     # (DOC-014 § Standard mappings).
-    event_time: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
+    event_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     ingested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     confirmation_status: Mapped[ConfirmationStatus] = mapped_column(
@@ -121,9 +118,7 @@ class CheckpointRow(Base):
 
     chain_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     last_finalized_block: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    last_finalized_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
+    last_finalized_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 

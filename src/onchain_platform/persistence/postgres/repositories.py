@@ -11,10 +11,12 @@ before it crosses this boundary (DOC-013 § Exception Hierarchy): a raw
 SQLAlchemyError must never propagate out of persistence/.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import Any, cast
 
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -73,8 +75,8 @@ def _ensure_utc(value: datetime) -> datetime:
     # comparisons and serialization are canonical (DOC-014: never bare
     # TIMESTAMP).
     if value.tzinfo is None:  # defensive only — TIMESTAMPTZ guarantees aware
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 async def save_fact(session: AsyncSession, fact: BlockchainFact) -> bool:
@@ -96,7 +98,9 @@ async def save_fact(session: AsyncSession, fact: BlockchainFact) -> bool:
         .on_conflict_do_nothing(index_elements=["fact_id"])
     )
     try:
-        result = await session.execute(stmt)
+        # CursorResult carries rowcount for DML (INSERT) — execute()'s
+        # declared return type is the wider Result, hence the cast.
+        result = cast("CursorResult[Any]", await session.execute(stmt))
         await session.commit()
     except SQLAlchemyError as exc:
         raise PersistenceError(f"failed to insert BlockchainFact {fact.fact_id}") from exc
@@ -132,8 +136,10 @@ async def list_facts_for_chain(session: AsyncSession, chain_id: int) -> list[Blo
 async def count_facts_for_chain(session: AsyncSession, chain_id: int) -> int:
     """Row count for a chain — used to prove idempotency (ADR-006 §
     Idempotency): the same block range processed twice must not change it."""
-    stmt = select(func.count()).select_from(BlockchainFactRow).where(
-        BlockchainFactRow.chain_id == chain_id
+    stmt = (
+        select(func.count())
+        .select_from(BlockchainFactRow)
+        .where(BlockchainFactRow.chain_id == chain_id)
     )
     try:
         return int((await session.execute(stmt)).scalar_one())

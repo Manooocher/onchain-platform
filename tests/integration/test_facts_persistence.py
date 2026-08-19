@@ -5,6 +5,8 @@ Integration Tests, DOC-011 § tests). Naming: test_<unit>_<scenario>_<
 expected_outcome> (DOC-013 § Testing Conventions).
 """
 
+from collections.abc import Awaitable, Callable
+
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
@@ -14,7 +16,7 @@ from tests.factories.blockchain_fact import blockchain_fact
 
 
 @pytest.fixture
-def clean_facts(pg_engine: AsyncEngine):
+def clean_facts(pg_engine: AsyncEngine) -> Callable[[], Awaitable[None]]:
     """Truncate blockchain_facts before each test (test isolation only —
     nothing here ever touches FINALIZED rows of real data; the table is
     disposable test infrastructure)."""
@@ -27,7 +29,7 @@ def clean_facts(pg_engine: AsyncEngine):
 
 
 async def test_save_fact_inserts_row_readable_byte_identical(
-    pg_engine: AsyncEngine, clean_facts
+    pg_engine: AsyncEngine, clean_facts: Callable[[], Awaitable[None]]
 ) -> None:
     await clean_facts()
     fact = blockchain_fact()
@@ -50,7 +52,7 @@ async def test_save_fact_inserts_row_readable_byte_identical(
 
 
 async def test_save_fact_twice_is_idempotent_no_duplicate(
-    pg_engine: AsyncEngine, clean_facts
+    pg_engine: AsyncEngine, clean_facts: Callable[[], Awaitable[None]]
 ) -> None:
     # ADR-006 § Idempotency: processing the same event multiple times must
     # produce the same final system state — proven, not assumed.
@@ -71,7 +73,7 @@ async def test_save_fact_twice_is_idempotent_no_duplicate(
 
 
 async def test_list_facts_for_chain_returns_deterministic_order(
-    pg_engine: AsyncEngine, clean_facts
+    pg_engine: AsyncEngine, clean_facts: Callable[[], Awaitable[None]]
 ) -> None:
     # DOC-013 § Determinism Discipline: ordered iteration only.
     await clean_facts()
@@ -92,7 +94,9 @@ async def test_list_facts_for_chain_returns_deterministic_order(
     assert [f.log_index for f in rows] == [1, 3, 9]
 
 
-async def test_get_fact_missing_returns_none(pg_engine: AsyncEngine, clean_facts) -> None:
+async def test_get_fact_missing_returns_none(
+    pg_engine: AsyncEngine, clean_facts: Callable[[], Awaitable[None]]
+) -> None:
     await clean_facts()
     async with AsyncSession(pg_engine, expire_on_commit=False) as session:
         result = await repositories.get_fact(session, "8453:0x" + "00" * 32 + ":0")
