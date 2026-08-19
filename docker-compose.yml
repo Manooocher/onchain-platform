@@ -1,0 +1,43 @@
+# Day 0 infrastructure (ImplementationPlan § Day 0): Postgres with the
+# TimescaleDB extension enabled, plus Redis. The `platform` service is
+# deliberately absent — there is nothing to containerize until Milestone 1
+# runs locally first.
+#
+# Local-dev-only container with trust auth (localhost binding, single user);
+# POSTGRES_DSN in .env must match:
+# postgresql+asyncpg://onchain@localhost:5433/onchain_platform
+#
+# Port note: host port 5433 maps to container 5432 so this compose stack never
+# collides with any other local Postgres.
+
+services:
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    container_name: onchain_platform_timescaledb
+    environment:
+      POSTGRES_USER: onchain
+      POSTGRES_DB: onchain_platform
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "5433:5432"
+    volumes:
+      - onchain_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U onchain -d onchain_platform"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  redis:
+    image: redis:7-alpine
+    container_name: onchain_platform_redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  onchain_pgdata:

@@ -6,10 +6,12 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "alembic>=1.18.5",
+    "asyncpg>=0.31.0",
     "fastapi>=0.139.0",
     "httpx>=0.28.1",
     "polars>=1.42.1",
     "pydantic>=2.13.4",
+    "pydantic-settings>=2.15.0",
     "redis>=8.0.1",
     "sqlalchemy>=2.0.51",
     "streamlit>=1.59.2",
@@ -137,4 +139,45 @@ dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "ruff>=0.15.21",
+]
+
+# mypy runs with --strict semantics (DOC-013 § Determinism Discipline:
+# "mypy must be run with --strict (or disallow_untyped_defs = True)").
+[tool.mypy]
+strict = true
+files = ["src", "tests"]
+plugins = ["pydantic.mypy"]
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["migrations/versions"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "ASYNC", # flake8-async (blocking calls in async code — DOC-013 § Async)
+    "TID",  # flake8-tidy-imports
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Alembic migrations are generated scaffolding, not Capability logic.
+"migrations/**" = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    # Network-dependent smoke tests against a real RPC endpoint. Never gate CI.
+    "live: tests that require network access to a real RPC provider",
 ]

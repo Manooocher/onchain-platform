@@ -1,0 +1,46 @@
+# CI runs the three quality gates from commit 1 onward (ImplementationPlan §
+# Continuous Practices: "lint-imports runs in CI from Day 0's empty skeleton
+# onward", plus DOC-010 § Code Quality Gates — Ruff and mypy on every change).
+#
+# Integration/replay jobs need Postgres (timescale/timescaledb) and Redis
+# service containers; they are added in the follow-up that wires `make test`
+# against services (Milestone 1 build steps 16/25). The fast gates below need
+# no services.
+
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Ruff check
+        run: uv run ruff check .
+
+      - name: Ruff format check
+        run: uv run ruff format --check .
+
+      - name: Mypy (strict)
+        run: uv run mypy src/ tests/
+
+      - name: Import-linter contracts (DOC-011)
+        run: uv run lint-imports
+
+      - name: Unit + schema tests
+        run: uv run pytest tests/unit tests/schema

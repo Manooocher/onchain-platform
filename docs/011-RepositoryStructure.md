@@ -1,10 +1,10 @@
 ---
 id: DOC-011
 title: Repository Structure
-version: 1.4
+version: 1.5
 status: Draft
 owner: CTO
-last_updated: 2026-07-13
+last_updated: 2026-08-19
 tags:
   - repository
   - engineering
@@ -106,6 +106,7 @@ Why `src/` and not a flat package at the repository root: with `uv` and modern p
 ```text
 domain/
 ├── schemas/           # Pydantic Canonical Schemas — field shapes defined in DOC-012 Part B, concepts in DOC-008
+│   ├── enums.py       # ConfirmationStatus, FactType — fact-lifecycle enums (DOC-012 § B.1)
 │   ├── checkpoint.py
 │   ├── blockchain_fact.py
 │   ├── state_projection.py
@@ -123,7 +124,7 @@ domain/
 │   ├── liquidity_pool.py
 │   ├── wallet.py
 │   └── metadata.py
-├── enums.py           # ConfirmationStatus, ChainId, EntityType
+├── enums.py           # ChainId, EntityType — structural/registry enums (slowly-changing, Part A)
 └── ids.py             # Canonical ID construction (eip155:<chain_id>/<entity_type>:<address>)
 ```
 
