@@ -7,25 +7,10 @@ expected_outcome> (DOC-013 § Testing Conventions).
 
 from collections.abc import Awaitable, Callable
 
-import pytest
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from onchain_platform.persistence.postgres import repositories
 from tests.factories.blockchain_fact import blockchain_fact
-
-
-@pytest.fixture
-def clean_facts(pg_engine: AsyncEngine) -> Callable[[], Awaitable[None]]:
-    """Truncate blockchain_facts before each test (test isolation only —
-    nothing here ever touches FINALIZED rows of real data; the table is
-    disposable test infrastructure)."""
-
-    async def _clean() -> None:
-        async with pg_engine.begin() as conn:
-            await conn.execute(text("TRUNCATE blockchain_facts"))
-
-    return _clean
 
 
 async def test_save_fact_inserts_row_readable_byte_identical(

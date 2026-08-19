@@ -11,9 +11,11 @@ hardcoded.
 """
 
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 
+import pytest
 import pytest_asyncio
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 DEFAULT_POSTGRES_DSN = "postgresql+asyncpg://onchain@localhost:5433/onchain_platform"
@@ -35,3 +37,16 @@ async def pg_engine() -> AsyncIterator[AsyncEngine]:
         yield engine
     finally:
         await engine.dispose()
+
+
+@pytest.fixture
+def clean_facts(pg_engine: AsyncEngine) -> Callable[[], Awaitable[None]]:
+    """Truncate blockchain_facts before each test (test isolation only —
+    nothing here ever touches FINALIZED rows of real data; the table is
+    disposable test infrastructure shared by integration and replay tests)."""
+
+    async def _clean() -> None:
+        async with pg_engine.begin() as conn:
+            await conn.execute(text("TRUNCATE blockchain_facts"))
+
+    return _clean
