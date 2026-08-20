@@ -37,3 +37,26 @@ class FactType(StrEnum):
     SWAP_EXECUTED = "SWAP_EXECUTED"
     LIQUIDITY_ADDED = "LIQUIDITY_ADDED"
     LIQUIDITY_REMOVED = "LIQUIDITY_REMOVED"
+
+
+class BarInterval(StrEnum):
+    """Market Bar intervals (DOC-012 § B.3).
+
+    Epoch-based modulo arithmetic for bucketing: bar_start = event_time -
+    (event_time % interval_seconds). Deterministic, timezone-independent
+    (UTC).
+    """
+
+    ONE_MINUTE = "1m"
+    FIVE_MINUTES = "5m"
+    FIFTEEN_MINUTES = "15m"
+    ONE_HOUR = "1h"
+
+    @property
+    def seconds(self) -> int:
+        return {
+            "1m": 60,
+            "5m": 300,
+            "15m": 900,
+            "1h": 3600,
+        }[self.value]
