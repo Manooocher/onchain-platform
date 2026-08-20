@@ -1,10 +1,9 @@
 """Fact Processor — canonical shape → Blockchain Fact (Pending) (DOC-011 §
-processing/, ImplementationPlan § Milestone 1).
+processing/).
 
-Milestone 1 scope: PAIR_CREATED only, PENDING only. The full Confirmation
-Lifecycle (CONFIRMED/FINALIZED/ORPHANED) is deliberately NOT here — that is
-Milestone 2 (processing/finality_engine.py), separated so this milestone
-stays small enough to actually finish (ImplementationPlan § Milestone 1).
+Handles both PAIR_CREATED and SWAP_EXECUTED fact types. The full
+Confirmation Lifecycle (CONFIRMED/FINALIZED/ORPHANED) is owned by
+processing/finality_engine.py (Milestone 2).
 
 Determinism (DOC-013 § Determinism Discipline): no wall-clock reads —
 ingested_at comes from the injected clock, observed_at from the collected
@@ -22,11 +21,14 @@ from onchain_platform.domain.exceptions import DomainValidationError
 from onchain_platform.domain.schemas.blockchain_fact import (
     BlockchainFact,
     PairCreatedPayload,
+    SwapExecutedPayload,
 )
 from onchain_platform.domain.schemas.enums import ConfirmationStatus, FactType
 from onchain_platform.processing.normalizer import (
     PAIR_CREATED_TOPIC,
+    SWAP_TOPIC,
     normalize_pair_created,
+    normalize_swap,
 )
 
 logger = structlog.get_logger(__name__)
@@ -50,20 +52,24 @@ class FactProcessor:
     def process(self, collected: CollectedLog) -> BlockchainFact:
         """Normalize one collected log into a PENDING BlockchainFact.
 
-        Raises DomainValidationError for logs that are not PAIR_CREATED or
-        cannot be decoded — callers (the replay handler, main.py) decide
-        whether that is fatal.
+        Dispatches on topics[0] to the appropriate normalizer. Raises
+        DomainValidationError for unknown topics — callers decide whether
+        that is fatal.
         """
-        if collected.raw_log.topics[0] != PAIR_CREATED_TOPIC:
-            # The collector filters on topic0, so this is defense in depth —
-            # a misconfigured topic must fail loudly, never silently produce
-            # garbage facts (ADR-006 Principle 1: the platform owns the
-            # canonical transformation).
+        topic0 = collected.raw_log.topics[0]
+
+        if topic0 == PAIR_CREATED_TOPIC:
+            return self._process_pair_created(collected)
+        elif topic0 == SWAP_TOPIC:
+            return self._process_swap(collected)
+        else:
             raise DomainValidationError(
-                f"FactProcessor received a non-PairCreated log "
-                f"(topic0={collected.raw_log.topics[0]!r})"
+                f"FactProcessor received log with unknown topic0 {topic0!r} "
+                f"(tx={collected.raw_log.transaction_hash}, "
+                f"logIndex={collected.raw_log.log_index})"
             )
 
+    def _process_pair_created(self, collected: CollectedLog) -> BlockchainFact:
         normalized = normalize_pair_created(collected)
 
         payload = PairCreatedPayload(
@@ -73,11 +79,60 @@ class FactProcessor:
             token1_address=normalized.token1_address,
             dex=normalized.dex,
         )
+        fact_type = FactType.PAIR_CREATED
+
+        return self._build_fact(
+            normalized.tx_hash,
+            normalized.log_index,
+            normalized.block_number,
+            normalized.block_hash,
+            normalized.event_time,
+            collected.observed_at,
+            fact_type,
+            payload,
+        )
+
+    def _process_swap(self, collected: CollectedLog) -> BlockchainFact:
+        normalized = normalize_swap(collected)
+
+        payload = SwapExecutedPayload(
+            fact_type="SWAP_EXECUTED",
+            pool_address=normalized.pool_address,
+            sender=normalized.sender,
+            recipient=normalized.recipient,
+            amount0_in=normalized.amount0_in,
+            amount1_in=normalized.amount1_in,
+            amount0_out=normalized.amount0_out,
+            amount1_out=normalized.amount1_out,
+        )
+        fact_type = FactType.SWAP_EXECUTED
+
+        return self._build_fact(
+            normalized.tx_hash,
+            normalized.log_index,
+            normalized.block_number,
+            normalized.block_hash,
+            normalized.event_time,
+            collected.observed_at,
+            fact_type,
+            payload,
+        )
+
+    def _build_fact(
+        self,
+        tx_hash: str,
+        log_index: int,
+        block_number: int,
+        block_hash: str,
+        event_time: datetime,
+        observed_at: datetime,
+        fact_type: FactType,
+        payload: PairCreatedPayload | SwapExecutedPayload,
+    ) -> BlockchainFact:
         # DOC-012 § Modeling the discriminated payload: fact_type and
         # payload.fact_type are intentionally the same value in two places;
         # enforcing their sync is THIS file's job, not the schema's.
-        fact_type = FactType(payload.fact_type)
-        if fact_type != FactType.PAIR_CREATED:  # structurally impossible; guard anyway
+        if fact_type.value != payload.fact_type:
             raise DomainValidationError("fact_type/payload.fact_type sync violated")
 
         fact = BlockchainFact(
@@ -85,18 +140,16 @@ class FactProcessor:
             # Natural key, ':'-safe for fact_id (DOC-012 § Composite ID
             # Delimiter): chain_id and log_index are bare ints, tx_hash is
             # 0x-hex without colons.
-            fact_id=f"{self._chain_id}:{normalized.tx_hash}:{normalized.log_index}",
+            fact_id=f"{self._chain_id}:{tx_hash}:{log_index}",
             chain_id=self._chain_id,
             fact_type=fact_type,
-            block_number=normalized.block_number,
-            block_hash=normalized.block_hash,
-            tx_hash=normalized.tx_hash,
-            log_index=normalized.log_index,
-            event_time=normalized.event_time,
-            observed_at=collected.observed_at,
+            block_number=block_number,
+            block_hash=block_hash,
+            tx_hash=tx_hash,
+            log_index=log_index,
+            event_time=event_time,
+            observed_at=observed_at,
             ingested_at=self._clock(),
-            # Milestone 1 persists PENDING only; the Finality Engine owns
-            # every later transition (Milestone 2).
             confirmation_status=ConfirmationStatus.PENDING,
             confirmations=0,
             payload=payload,
