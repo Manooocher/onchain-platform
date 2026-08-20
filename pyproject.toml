@@ -139,6 +139,7 @@ dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "ruff>=0.15.21",
+    "types-pyyaml>=6.0.12.20260815",
 ]
 
 # mypy runs with --strict semantics (DOC-013 § Determinism Discipline:

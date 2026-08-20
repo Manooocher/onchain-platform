@@ -7,6 +7,9 @@ Settings instance at startup and threads it through everything else
 (DOC-013 § Dependency & Composition).
 """
 
+from pathlib import Path
+
+import yaml
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -33,3 +36,18 @@ class Settings(BaseSettings):
     factory_address: str = "0x8909dc15e40173ff4699343b6eb8132c65e18ec6"
     dex: str = "uniswap_v2"
     poll_interval_seconds: float = 2.0  # Base: ~2s blocks (DOC-006)
+
+    # Milestone 2: confirmation depth configuration (ADR-006 § Configurable
+    # Confirmation Depth: "The platform must not hardcode confirmation rules").
+    confirmation_depth_path: Path = Path("config/confirmation_depth.yaml")
+
+    def load_confirmation_depths(self) -> dict[int, int]:
+        """Load per-chain confirmation depths from YAML.
+
+        Returns {chain_id: depth}. ADR-006 § Configurable Confirmation
+        Depth: 'Future chains may define different thresholds without
+        changing application logic.'
+        """
+        raw = yaml.safe_load(self.confirmation_depth_path.read_text())
+        # YAML keys are strings; convert to int chain_ids.
+        return {int(k): int(v) for k, v in raw["confirmation_depth"].items()}
