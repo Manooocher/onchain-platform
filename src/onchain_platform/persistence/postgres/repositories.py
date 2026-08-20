@@ -14,7 +14,7 @@ SQLAlchemyError must never propagate out of persistence/.
 from datetime import UTC, datetime
 from typing import Any, cast
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import SQLAlchemyError
@@ -22,7 +22,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from onchain_platform.domain.exceptions import PersistenceError
 from onchain_platform.domain.schemas.blockchain_fact import BlockchainFact
-from onchain_platform.persistence.postgres.facts import BlockchainFactRow
+from onchain_platform.domain.schemas.checkpoint import Checkpoint
+from onchain_platform.domain.schemas.enums import ConfirmationStatus
+from onchain_platform.persistence.postgres.facts import BlockchainFactRow, CheckpointRow
 
 
 def _fact_to_row_values(fact: BlockchainFact) -> dict[str, object]:
@@ -145,3 +147,159 @@ async def count_facts_for_chain(session: AsyncSession, chain_id: int) -> int:
         return int((await session.execute(stmt)).scalar_one())
     except SQLAlchemyError as exc:
         raise PersistenceError(f"failed to count facts for chain {chain_id}") from exc
+
+
+# ---------------------------------------------------------------------------
+# Confirmation Lifecycle (Milestone 2 — ADR-006 § Confirmation Lifecycle)
+# ---------------------------------------------------------------------------
+
+
+async def advance_confirmation_counts(
+    session: AsyncSession,
+    chain_id: int,
+    current_chain_head: int,
+    confirmation_depth: int,
+) -> None:
+    """Advance confirmations for all non-terminal facts on a chain.
+
+    Called once per new block by the Finality Engine. For each PENDING or
+    CONFIRMED fact: confirmations = current_chain_head - fact.block_number.
+    Facts whose confirmations >= confirmation_depth transition to FINALIZED.
+
+    DOC-013 § Immutability & State Modeling: the row-level guard is evaluated
+    here — FINALIZED rows are never touched by this UPDATE (the WHERE clause
+    excludes them).
+    """
+    # confirmations = head - block_number for all non-terminal facts.
+    # Status transitions: PENDING → CONFIRMED (confirmations >= 1),
+    #                     CONFIRMED → FINALIZED (confirmations >= depth).
+    # The CASE expression handles both transitions in one pass.
+    depth = confirmation_depth
+    stmt = (
+        update(BlockchainFactRow)
+        .where(
+            BlockchainFactRow.chain_id == chain_id,
+            BlockchainFactRow.confirmation_status.in_(
+                [
+                    ConfirmationStatus.PENDING,
+                    ConfirmationStatus.CONFIRMED,
+                ]
+            ),
+        )
+        .values(
+            confirmations=current_chain_head - BlockchainFactRow.block_number,
+            confirmation_status=case(
+                (
+                    current_chain_head - BlockchainFactRow.block_number >= depth,
+                    ConfirmationStatus.FINALIZED,
+                ),
+                (
+                    current_chain_head - BlockchainFactRow.block_number >= 1,
+                    ConfirmationStatus.CONFIRMED,
+                ),
+                else_=BlockchainFactRow.confirmation_status,
+            ),
+        )
+    )
+    try:
+        await session.execute(stmt)
+        await session.commit()
+    except SQLAlchemyError as exc:
+        raise PersistenceError(f"failed to advance confirmations for chain {chain_id}") from exc
+
+
+async def mark_facts_orphaned(
+    session: AsyncSession,
+    chain_id: int,
+    from_block: int,
+    to_block: int,
+) -> int:
+    """Mark all non-finalized facts in [from_block, to_block] as ORPHANED.
+
+    ADR-006 § Orphaned: "The Fact remains stored for auditability but is
+    excluded from downstream processing. Facts are never deleted. Only their
+    confirmation status changes."
+
+    DOC-013 § Immutability: FINALIZED rows before the fork point are NEVER
+    touched — the WHERE clause excludes them. Only PENDING/CONFIRMED facts
+    in the orphaned range are marked ORPHANED.
+
+    Returns the number of rows affected.
+    """
+    stmt = (
+        update(BlockchainFactRow)
+        .where(
+            BlockchainFactRow.chain_id == chain_id,
+            BlockchainFactRow.block_number >= from_block,
+            BlockchainFactRow.block_number <= to_block,
+            BlockchainFactRow.confirmation_status.in_(
+                [
+                    ConfirmationStatus.PENDING,
+                    ConfirmationStatus.CONFIRMED,
+                ]
+            ),
+        )
+        .values(
+            confirmation_status=ConfirmationStatus.ORPHANED,
+            confirmations=0,
+        )
+    )
+    try:
+        result = cast("CursorResult[Any]", await session.execute(stmt))
+        await session.commit()
+    except SQLAlchemyError as exc:
+        raise PersistenceError(
+            f"failed to mark facts orphaned for chain {chain_id} blocks {from_block}..{to_block}"
+        ) from exc
+    return int(result.rowcount)
+
+
+async def get_checkpoint(session: AsyncSession, chain_id: int) -> Checkpoint | None:
+    """Read the checkpoint for a chain (DOC-012 § B.0). Returns None if no
+    checkpoint exists yet (first run)."""
+    stmt = select(CheckpointRow).where(CheckpointRow.chain_id == chain_id)
+    try:
+        row = (await session.execute(stmt)).scalar_one_or_none()
+    except SQLAlchemyError as exc:
+        raise PersistenceError(f"failed to read checkpoint for chain {chain_id}") from exc
+    if row is None:
+        return None
+    return Checkpoint(
+        chain_id=row.chain_id,
+        last_finalized_block=row.last_finalized_block,
+        last_finalized_at=_ensure_utc(row.last_finalized_at),
+        updated_at=_ensure_utc(row.updated_at),
+    )
+
+
+async def save_checkpoint(session: AsyncSession, checkpoint: Checkpoint) -> None:
+    """Upsert a checkpoint (DOC-012 § B.0 — mutable singleton per chain).
+
+    Checkpoint is the deliberate counterexample to BlockchainFact's
+    immutability: it is supposed to be overwritten in place as ingestion
+    advances (DOC-013 § Immutability & State Modeling).
+    """
+    stmt = (
+        pg_insert(CheckpointRow)
+        .values(
+            chain_id=checkpoint.chain_id,
+            last_finalized_block=checkpoint.last_finalized_block,
+            last_finalized_at=checkpoint.last_finalized_at,
+            updated_at=checkpoint.updated_at,
+        )
+        .on_conflict_do_update(
+            index_elements=["chain_id"],
+            set_={
+                "last_finalized_block": checkpoint.last_finalized_block,
+                "last_finalized_at": checkpoint.last_finalized_at,
+                "updated_at": checkpoint.updated_at,
+            },
+        )
+    )
+    try:
+        await session.execute(stmt)
+        await session.commit()
+    except SQLAlchemyError as exc:
+        raise PersistenceError(
+            f"failed to save checkpoint for chain {checkpoint.chain_id}"
+        ) from exc
