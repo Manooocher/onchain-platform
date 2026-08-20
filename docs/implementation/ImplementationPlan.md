@@ -96,8 +96,8 @@ Nothing here is a design decision — everything below was already decided in DO
 - `persistence/timescale/repositories.py` — first hypertable (`market_bars`), with the partitioning and compression policy from DOC-014.
 
 **Definition of done:**
-- [ ] A known historical swap sequence produces byte-identical OHLCV values on replay (DOC-010 § Testing — `Decimal` fields are zero-tolerance, not approximate).
-- [ ] A bar whose underlying facts include one that later orphans is fully recomputed, never patched (DOC-012's explicit rule).
+- [x] A known historical swap sequence produces byte-identical OHLCV values on replay (DOC-010 § Testing — `Decimal` fields are zero-tolerance, not approximate).
+- [x] A bar whose underlying facts include one that later orphans is fully recomputed, never patched (DOC-012's explicit rule).
 
 ---
 
