@@ -53,6 +53,7 @@ SAMPLE_LOG = RawLog(
 SAMPLE_BLOCK = BlockMetadata(
     number=13_500_004,
     hash="0xf7688420b215b621c41d64ec128184809fb3249bc1e70a07d8d197d94e821a41",
+    parent_hash="0x6b628a4744f41af5c3ba80d4bc898421c074a751dc9f91a71325812d11d36dcd",
     timestamp=datetime.fromtimestamp(1_713_789_355, tz=UTC),  # 2024-04-22T12:35:55Z
 )
 
@@ -150,7 +151,10 @@ async def test_collector_process_range_empty_blocks_forward_nothing() -> None:
     provider = FakeProvider(
         blocks={
             100: BlockMetadata(
-                number=100, hash="0x" + "11" * 32, timestamp=datetime(2024, 1, 1, tzinfo=UTC)
+                number=100,
+                hash="0x" + "11" * 32,
+                parent_hash="0x" + "00" * 32,
+                timestamp=datetime(2024, 1, 1, tzinfo=UTC),
             )
         },
         logs_by_block={},

@@ -51,12 +51,19 @@ class RawLog(BaseModel):
 
 class BlockMetadata(BaseModel):
     """Block header fields the pipeline needs (ADR-006 § Provider
-    Abstraction: 'Retrieve block metadata')."""
+    Abstraction: 'Retrieve block metadata').
+
+    parent_hash is required by the Finality Engine's continuity verification
+    (ADR-006 § Canonical Chain Validation Engine: the engine verifies that
+    each block's parent_hash matches the previous block's hash across the
+    full confirmation window).
+    """
 
     model_config = ConfigDict(frozen=True)
 
     number: int
     hash: str  # lowercase 0x + 64 hex
+    parent_hash: str  # lowercase 0x + 64 hex
     timestamp: datetime  # block timestamp, tz-aware UTC
 
 

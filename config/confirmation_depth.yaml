@@ -1,0 +1,12 @@
+# Per-chain confirmation depth (ADR-006 § Configurable Confirmation Depth).
+#
+# "The platform must not hardcode confirmation rules."
+# "Future chains may define different thresholds without changing application logic."
+#
+# Values are conservative starting points (ImplementationPlan § Open Decisions):
+# tighten only once real reorg frequency is observed, not from a guess.
+
+confirmation_depth:
+  ethereum: 12   # ~144s at 12s blocks; canonical finality threshold
+  base: 3        # ~6s at 2s blocks; OP Stack deterministic finality, near-zero reorgs
+  bnb: 8         # ~6s at ~0.75s blocks; fast but occasional instability

@@ -70,6 +70,7 @@ class LocalNodeProvider(BlockchainProvider):
         return BlockMetadata(
             number=_hex_to_int(block["number"]),
             hash=_lower(block["hash"]),
+            parent_hash=_lower(block["parentHash"]),
             timestamp=datetime.fromtimestamp(_hex_to_int(block["timestamp"]), tz=UTC),
         )
 

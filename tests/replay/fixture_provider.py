@@ -51,6 +51,7 @@ class FixtureProvider(BlockchainProvider):
             int(number): BlockMetadata(
                 number=int(meta["number"]),
                 hash=meta["hash"],
+                parent_hash=meta["parentHash"],
                 timestamp=_parse_utc(meta["timestamp"]),
             )
             for number, meta in raw["blocks"].items()

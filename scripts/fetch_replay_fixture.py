@@ -59,6 +59,7 @@ async def fetch(rpc_url: str) -> dict[str, object]:
             blocks[str(block_number)] = {
                 "number": str(meta.number),
                 "hash": meta.hash,
+                "parentHash": meta.parent_hash,
                 # Canonical serialization: ISO-8601 Z-suffix (DOC-012 §
                 # Conventions).
                 "timestamp": meta.timestamp.astimezone(UTC).isoformat().replace("+00:00", "Z"),
