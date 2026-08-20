@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from onchain_platform.acquisition.collector import CollectedLog, Collector
+from onchain_platform.acquisition.collector import CollectedLog, Collector, LogFilter
 from onchain_platform.acquisition.providers.base import (
     BlockchainProvider,
     BlockMetadata,
@@ -117,9 +117,7 @@ def make_collector(provider: BlockchainProvider, received: list[CollectedLog]) -
     return Collector(
         provider,
         chain_id=BASE_CHAIN_ID,
-        factory_address=FACTORY,
-        event_topic=PAIR_CREATED_TOPIC,
-        dex="uniswap_v2",
+        filters=[LogFilter(address=FACTORY, topic=PAIR_CREATED_TOPIC, dex="uniswap_v2")],
         handler=handler,
         clock=lambda: PINNED_OBSERVED_AT,
         poll_interval_seconds=0.0,

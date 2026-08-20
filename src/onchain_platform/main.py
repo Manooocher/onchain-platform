@@ -23,7 +23,7 @@ from datetime import UTC, datetime
 import structlog
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 
-from onchain_platform.acquisition.collector import CollectedLog, Collector
+from onchain_platform.acquisition.collector import CollectedLog, Collector, LogFilter
 from onchain_platform.acquisition.providers.local_node import LocalNodeProvider
 from onchain_platform.domain.exceptions import DomainValidationError, PlatformError
 from onchain_platform.persistence.postgres import repositories
@@ -31,7 +31,7 @@ from onchain_platform.platform.config import Settings
 from onchain_platform.platform.logging import configure_logging
 from onchain_platform.processing.fact_processor import FactProcessor
 from onchain_platform.processing.finality_engine import FinalityEngine
-from onchain_platform.processing.normalizer import PAIR_CREATED_TOPIC
+from onchain_platform.processing.normalizer import PAIR_CREATED_TOPIC, SWAP_TOPIC
 from onchain_platform.processing.reorg_handler import LoggingReorgEventHandler
 
 logger = structlog.get_logger(__name__)
@@ -112,9 +112,18 @@ async def _run_live(settings: Settings, start_block: int | None) -> None:
     collector = Collector(
         provider,
         chain_id=settings.chain_id,
-        factory_address=settings.factory_address,
-        event_topic=PAIR_CREATED_TOPIC,
-        dex=settings.dex,
+        filters=[
+            LogFilter(
+                address=settings.factory_address,
+                topic=PAIR_CREATED_TOPIC,
+                dex=settings.dex,
+            ),
+            LogFilter(
+                address=None,  # Swap events from any pool
+                topic=SWAP_TOPIC,
+                dex=settings.dex,
+            ),
+        ],
         handler=handler,
         clock=_clock,
         poll_interval_seconds=settings.poll_interval_seconds,

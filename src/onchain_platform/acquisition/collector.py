@@ -12,6 +12,12 @@ a block are persisted as PENDING, the collector calls
 finality_engine.on_new_block() to advance the Confirmation Lifecycle
 (ADR-006 § Finality Engine).
 
+Milestone 3 extends the collector to support multiple log filter
+configurations (e.g., PairCreated from a factory + Swap from any pool).
+Each filter carries its own address/topic/dex label. Logs from all filters
+are merged and sorted by (block_number, log_index) for deterministic
+ordering (DOC-013 § Determinism Discipline).
+
 Determinism (DOC-013 § Determinism Discipline):
 - No wall-clock reads inside this Capability. Time enters only through the
   injected `clock` callable, constructed in main.py — the strictest reading
@@ -65,13 +71,28 @@ class CollectedLog:
     # When the RPC/provider emitted this to us — stamped at receipt with the
     # injected clock (DOC-008 Triple Timestamp Standard: observed_at).
     observed_at: datetime
-    # DEX attribution of the emitting factory — collector configuration,
-    # propagated into the payload by processing/fact_processor.py.
+    # DEX attribution — from the filter configuration, propagated into the
+    # payload by processing/fact_processor.py.
+    dex: str
+
+
+@dataclass(frozen=True)
+class LogFilter:
+    """One log filter configuration: address + topic + dex label.
+
+    address=None means "any address" (e.g., Swap events from any pool).
+    topic is the event signature (keccak256 of the event ABI).
+    dex is the label propagated into the CollectedLog.
+    """
+
+    address: str | None
+    topic: str
     dex: str
 
 
 class Collector:
-    """Polls one chain for one factory's logs and forwards them.
+    """Polls one chain for logs matching one or more filter configurations
+    and forwards them.
 
     All constructor dependencies are passed in (DOC-013 § Dependency &
     Composition: never imported as configured globals).
@@ -82,9 +103,7 @@ class Collector:
         provider: BlockchainProvider,
         *,
         chain_id: int,
-        factory_address: str,
-        event_topic: str,
-        dex: str,
+        filters: list[LogFilter],
         handler: CollectedHandler,
         clock: Callable[[], datetime],
         poll_interval_seconds: float = 2.0,
@@ -92,9 +111,7 @@ class Collector:
     ) -> None:
         self._provider = provider
         self._chain_id = chain_id
-        self._factory_address = factory_address
-        self._event_topic = event_topic
-        self._dex = dex
+        self._filters = filters
         self._handler = handler
         self._clock = clock
         self._poll_interval_seconds = poll_interval_seconds
@@ -137,19 +154,30 @@ class Collector:
 
     async def _process_block(self, block_number: int) -> int:
         block = await self._provider.get_block_metadata(block_number)
-        logs = await self._provider.get_logs(
-            from_block=block_number,
-            to_block=block_number,
-            address=self._factory_address,
-            topics=[self._event_topic],
-        )
+
+        # Collect logs from all filter configurations and merge them in
+        # deterministic order (DOC-013 § Determinism Discipline: ordered
+        # iteration only).
+        all_logs: list[tuple[RawLog, str]] = []
+        for f in self._filters:
+            logs = await self._provider.get_logs(
+                from_block=block_number,
+                to_block=block_number,
+                address=f.address,
+                topics=[f.topic],
+            )
+            for log in logs:
+                all_logs.append((log, f.dex))
+        # Canonical order: block_number ascending, then log_index.
+        all_logs.sort(key=lambda x: (x[0].block_number, x[0].log_index))
+
         forwarded = 0
-        for raw_log in logs:  # provider contract: (block_number, log_index) order
+        for raw_log, dex in all_logs:
             collected = CollectedLog(
                 raw_log=raw_log,
                 block=block,
                 observed_at=self._clock(),
-                dex=self._dex,
+                dex=dex,
             )
             await self._handler(collected)
             forwarded += 1
@@ -160,7 +188,7 @@ class Collector:
             "block_processed",
             chain_id=self._chain_id,
             block_number=block_number,
-            tx_hash=(logs[0].transaction_hash if logs else None),
+            tx_hash=(all_logs[0][0].transaction_hash if all_logs else None),
             logs_forwarded=forwarded,
         )
         # Milestone 2: after all facts for this block are persisted as

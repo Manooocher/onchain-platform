@@ -18,7 +18,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from onchain_platform.acquisition.collector import CollectedLog, Collector
+from onchain_platform.acquisition.collector import CollectedLog, Collector, LogFilter
 from onchain_platform.acquisition.providers.local_node import LocalNodeProvider
 from onchain_platform.domain.schemas.blockchain_fact import PairCreatedPayload
 from onchain_platform.persistence.postgres import repositories
@@ -71,9 +71,7 @@ async def test_live_pair_created_becomes_real_row(
         collector = Collector(
             provider,
             chain_id=CHAIN_ID,
-            factory_address=FACTORY,
-            event_topic=PAIR_CREATED_TOPIC,
-            dex=DEX,
+            filters=[LogFilter(address=FACTORY, topic=PAIR_CREATED_TOPIC, dex=DEX)],
             handler=handler,
             clock=_clock,
             poll_interval_seconds=0.0,

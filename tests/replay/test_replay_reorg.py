@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from onchain_platform.acquisition.collector import CollectedLog, Collector
+from onchain_platform.acquisition.collector import CollectedLog, Collector, LogFilter
 from onchain_platform.acquisition.providers.base import BlockMetadata, RawLog
 from onchain_platform.domain.schemas.enums import ConfirmationStatus
 from onchain_platform.persistence.postgres import repositories
@@ -131,9 +131,7 @@ async def test_replay_reorg_marks_divergent_facts_orphaned(
     collector = Collector(
         provider,
         chain_id=CHAIN_ID,
-        factory_address=FACTORY,
-        event_topic=PAIR_CREATED_TOPIC,
-        dex=DEX,
+        filters=[LogFilter(address=FACTORY, topic=PAIR_CREATED_TOPIC, dex=DEX)],
         handler=handler,
         clock=lambda: PINNED_TIME,
         poll_interval_seconds=0.0,

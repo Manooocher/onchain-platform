@@ -23,7 +23,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from onchain_platform.acquisition.collector import CollectedLog, Collector
+from onchain_platform.acquisition.collector import CollectedLog, Collector, LogFilter
 from onchain_platform.domain.schemas.blockchain_fact import (
     BlockchainFact,
     PairCreatedPayload,
@@ -74,9 +74,7 @@ async def _run_pipeline(provider: FixtureProvider) -> list[BlockchainFact]:
     collector = Collector(
         provider,
         chain_id=provider.chain_id,
-        factory_address=provider.factory_address,
-        event_topic=provider.event_topic,
-        dex=DEX,
+        filters=[LogFilter(address=provider.factory_address, topic=provider.event_topic, dex=DEX)],
         handler=handler,
         clock=lambda: provider.observed_at,
         poll_interval_seconds=0.0,
@@ -149,9 +147,7 @@ async def test_replay_into_real_postgres_is_idempotent(
     collector = Collector(
         provider,
         chain_id=provider.chain_id,
-        factory_address=provider.factory_address,
-        event_topic=provider.event_topic,
-        dex=DEX,
+        filters=[LogFilter(address=provider.factory_address, topic=provider.event_topic, dex=DEX)],
         handler=handler,
         clock=lambda: provider.observed_at,
         poll_interval_seconds=0.0,
