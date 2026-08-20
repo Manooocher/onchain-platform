@@ -80,9 +80,9 @@ Nothing here is a design decision — everything below was already decided in DO
 - `config/confirmation_depth.yaml` (DOC-011) gets its first real values — see § Open Decisions.
 
 **Definition of done:**
-- [ ] A simulated reorg (replaying a block range where a later fetch shows a different `block_hash` at the same height) correctly produces `ORPHANED`, not a wrong `FINALIZED` row.
-- [ ] Killing the collector process mid-block and restarting resumes from the checkpoint without reprocessing already-finalized facts or losing pending ones (DOC-013 § Async Conventions — graceful shutdown).
-- [ ] Replay Test fixtures now include at least one known reorg case.
+- [x] A simulated reorg (replaying a block range where a later fetch shows a different `block_hash` at the same height) correctly produces `ORPHANED`, not a wrong `FINALIZED` row.
+- [x] Killing the collector process mid-block and restarting resumes from the checkpoint without reprocessing already-finalized facts or losing pending ones (DOC-013 § Async Conventions — graceful shutdown).
+- [x] Replay Test fixtures now include at least one known reorg case.
 
 ---
 
