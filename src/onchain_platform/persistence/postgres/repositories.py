@@ -218,15 +218,16 @@ async def mark_facts_orphaned(
     from_block: int,
     to_block: int,
 ) -> int:
-    """Mark all non-finalized facts in [from_block, to_block] as ORPHANED.
+    """Mark facts in [from_block, to_block] as ORPHANED.
 
     ADR-006 § Orphaned: "The Fact remains stored for auditability but is
     excluded from downstream processing. Facts are never deleted. Only their
     confirmation status changes."
 
-    DOC-013 § Immutability: FINALIZED rows before the fork point are NEVER
-    touched — the WHERE clause excludes them. Only PENDING/CONFIRMED facts
-    in the orphaned range are marked ORPHANED.
+    DOC-013 § Immutability: FINALIZED rows are immutable except for the
+    one legal transition to ORPHANED. This function targets PENDING,
+    CONFIRMED, AND FINALIZED facts in the range — the FINALIZED→ORPHANED
+    transition is the sole exception to the immutability rule.
 
     Returns the number of rows affected.
     """
@@ -240,6 +241,7 @@ async def mark_facts_orphaned(
                 [
                     ConfirmationStatus.PENDING,
                     ConfirmationStatus.CONFIRMED,
+                    ConfirmationStatus.FINALIZED,
                 ]
             ),
         )

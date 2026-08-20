@@ -57,6 +57,10 @@ class FixtureProvider(BlockchainProvider):
             for number, meta in raw["blocks"].items()
         }
         self._logs: list[RawLog] = [RawLog.model_validate(entry) for entry in raw["logs"]]
+        # Swap logs (Milestone 3 extension).
+        self._swap_logs: list[RawLog] = [
+            RawLog.model_validate(entry) for entry in raw.get("swap_logs", [])
+        ]
 
     async def get_chain_id(self) -> int:
         return self.chain_id
@@ -78,9 +82,11 @@ class FixtureProvider(BlockchainProvider):
         topics: Sequence[str] | None = None,
     ) -> list[RawLog]:
         topic0 = topics[0] if topics else None
+        # Search both PairCreated logs and Swap logs.
+        all_logs = self._logs + self._swap_logs
         result = [
             log
-            for log in self._logs
+            for log in all_logs
             if from_block <= log.block_number <= to_block
             and (address is None or log.address == address)
             and (topic0 is None or (log.topics and log.topics[0] == topic0))

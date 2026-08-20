@@ -71,6 +71,22 @@ async def fetch(rpc_url: str) -> dict[str, object]:
             address=FACTORY_ADDRESS,
             topics=[PAIR_CREATED_TOPIC],
         )
+        # Also fetch Swap events from any address (no address filter).
+        from onchain_platform.processing.normalizer import SWAP_TOPIC
+
+        swap_logs = await provider.get_logs(
+            from_block=FROM_BLOCK,
+            to_block=TO_BLOCK,
+            topics=[SWAP_TOPIC],
+        )
+        # Select up to 5 Swap events from distinct pools for diversity.
+        seen_pools: set[str] = set()
+        selected_swaps = []
+        for log in swap_logs:
+            pool = log.address.lower()
+            if pool not in seen_pools and len(selected_swaps) < 5:
+                seen_pools.add(pool)
+                selected_swaps.append(log)
         return {
             "fixture_version": "1.0",
             "chain_id": CHAIN_ID,
@@ -82,6 +98,7 @@ async def fetch(rpc_url: str) -> dict[str, object]:
             "ingested_at": PINNED_INGESTED_AT,
             "blocks": blocks,
             "logs": [log.model_dump() for log in logs],
+            "swap_logs": [log.model_dump() for log in selected_swaps],
         }
     finally:
         await provider.close()

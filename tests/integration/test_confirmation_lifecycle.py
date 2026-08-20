@@ -72,41 +72,47 @@ async def test_advance_confirmation_counts_skips_finalized_rows(
     assert row2.confirmation_status == ConfirmationStatus.FINALIZED
 
 
-async def test_mark_facts_orphaned_leaves_finalized_untouched(
+async def test_mark_facts_orphaned_includes_finalized_in_range(
     pg_engine: AsyncEngine, clean_facts: Callable[[], Awaitable[None]]
 ) -> None:
-    # ADR-006 § Orphaned: only PENDING/CONFIRMED facts in the range are
-    # marked ORPHANED. FINALIZED facts before the fork point are untouched.
+    # DOC-013 § Immutability: FINALIZED rows are immutable except for the
+    # one legal transition to ORPHANED. mark_facts_orphaned targets
+    # PENDING, CONFIRMED, AND FINALIZED facts in the range.
     await clean_facts()
     fact_finalized = blockchain_fact(block_number=100, tx_hash=f"0x{'aa' * 32}", log_index=1)
-    fact_pending = blockchain_fact(block_number=105, tx_hash=f"0x{'bb' * 32}", log_index=2)
+    fact_out_of_range = blockchain_fact(block_number=90, tx_hash=f"0x{'cc' * 32}", log_index=3)
+    fact_confirmed = blockchain_fact(block_number=105, tx_hash=f"0x{'bb' * 32}", log_index=2)
 
-    # Insert both, then finalize only fact_finalized (block 100, head=103,
-    # depth=3 → confirmations=3 → FINALIZED). fact_pending (block 105) has
-    # confirmations=103-105 which is negative — so use head=106 instead:
-    # fact_finalized gets 6 confirmations (FINALIZED), fact_pending gets 1
-    # (CONFIRMED, not yet FINALIZED).
     async with AsyncSession(pg_engine, expire_on_commit=False) as session:
         await repositories.save_fact(session, fact_finalized)
-        await repositories.save_fact(session, fact_pending)
+        await repositories.save_fact(session, fact_out_of_range)
+        await repositories.save_fact(session, fact_confirmed)
         await repositories.advance_confirmation_counts(session, 8453, 106, 3)
 
     async with AsyncSession(pg_engine, expire_on_commit=False) as session:
         f1 = await repositories.get_fact(session, fact_finalized.fact_id)
-        f2 = await repositories.get_fact(session, fact_pending.fact_id)
+        f_out = await repositories.get_fact(session, fact_out_of_range.fact_id)
+        f2 = await repositories.get_fact(session, fact_confirmed.fact_id)
     assert f1 is not None and f1.confirmation_status == ConfirmationStatus.FINALIZED
+    assert f_out is not None and f_out.confirmation_status == ConfirmationStatus.FINALIZED
     assert f2 is not None and f2.confirmation_status == ConfirmationStatus.CONFIRMED
 
-    # Orphan range [104, 110] — should mark fact_pending ORPHANED but leave
-    # fact_finalized untouched (it's FINALIZED, excluded by the WHERE clause).
+    # Orphan range [104, 110] — should mark fact_finalized (block 100 is
+    # OUTSIDE range) untouched, fact_out_of_range (block 90) untouched,
+    # fact_confirmed (block 105) ORPHANED.
     async with AsyncSession(pg_engine, expire_on_commit=False) as session:
         count = await repositories.mark_facts_orphaned(session, 8453, 104, 110)
-    assert count == 1  # only fact_pending (block 105)
+    assert count == 1  # only fact_confirmed (block 105)
 
     async with AsyncSession(pg_engine, expire_on_commit=False) as session:
         f1 = await repositories.get_fact(session, fact_finalized.fact_id)
-        f2 = await repositories.get_fact(session, fact_pending.fact_id)
+        f_out = await repositories.get_fact(session, fact_out_of_range.fact_id)
+        f2 = await repositories.get_fact(session, fact_confirmed.fact_id)
+    # fact_finalized (block 100) is outside [104,110] — untouched.
     assert f1 is not None and f1.confirmation_status == ConfirmationStatus.FINALIZED
+    # fact_out_of_range (block 90) is outside [104,110] — untouched.
+    assert f_out is not None and f_out.confirmation_status == ConfirmationStatus.FINALIZED
+    # fact_confirmed (block 105) is in range — ORPHANED.
     assert f2 is not None and f2.confirmation_status == ConfirmationStatus.ORPHANED
     assert f2.confirmations == 0
 
