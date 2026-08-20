@@ -185,6 +185,10 @@ async def advance_confirmation_counts(
                     ConfirmationStatus.CONFIRMED,
                 ]
             ),
+            # Only advance facts whose block_number <= current_chain_head.
+            # Facts from future blocks (not yet confirmed by the chain)
+            # must not get negative confirmations (CHECK constraint).
+            BlockchainFactRow.block_number <= current_chain_head,
         )
         .values(
             confirmations=current_chain_head - BlockchainFactRow.block_number,
