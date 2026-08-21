@@ -20,11 +20,13 @@ import asyncio
 import signal
 from datetime import UTC, datetime
 
+import redis.asyncio as redis
 import structlog
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 
 from onchain_platform.acquisition.collector import CollectedLog, Collector, LogFilter
 from onchain_platform.acquisition.providers.local_node import LocalNodeProvider
+from onchain_platform.analytics import projection_engine
 from onchain_platform.domain.exceptions import DomainValidationError, PlatformError
 from onchain_platform.domain.schemas.enums import FactType
 from onchain_platform.domain_management import entity_resolution
@@ -33,7 +35,12 @@ from onchain_platform.platform.config import Settings
 from onchain_platform.platform.logging import configure_logging
 from onchain_platform.processing.fact_processor import FactProcessor
 from onchain_platform.processing.finality_engine import FinalityEngine
-from onchain_platform.processing.normalizer import PAIR_CREATED_TOPIC, SWAP_TOPIC
+from onchain_platform.processing.normalizer import (
+    BURN_TOPIC,
+    MINT_TOPIC,
+    PAIR_CREATED_TOPIC,
+    SWAP_TOPIC,
+)
 from onchain_platform.processing.reorg_handler import LoggingReorgEventHandler
 
 logger = structlog.get_logger(__name__)
@@ -97,11 +104,19 @@ async def _run_live(settings: Settings, start_block: int | None) -> None:
     else:
         effective_start = None  # will use chain head in run_from
 
+    # Redis client for StateProjection cache (DOC-012 § B.2).
+    redis_client = redis.from_url(settings.redis_url)
+
+    # Rebuild state from facts on startup (DOC-006: "State can always be
+    # reconstructed by replaying Facts").
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        await projection_engine.rebuild_from_facts(session, redis_client, settings.chain_id, _clock)
+
     async def handler(collected: CollectedLog) -> None:
         fact = processor.process(collected)
         # Session scoped to this call (DOC-013 § Async Conventions).
-        # Entity resolution runs in the same session as fact persistence —
-        # atomic, no partial state (ImplementationPlan § Milestone 4).
+        # Entity resolution + projection update run in the same session as
+        # fact persistence — atomic, no partial state.
         async with AsyncSession(engine, expire_on_commit=False) as session:
             inserted = await repositories.save_fact(session, fact)
             # Eager entity resolution (DOC-004 simplicity principle).
@@ -109,6 +124,9 @@ async def _run_live(settings: Settings, start_block: int | None) -> None:
                 await entity_resolution.resolve_from_pair_created(session, fact)
             elif fact.fact_type == FactType.SWAP_EXECUTED:
                 await entity_resolution.resolve_from_swap_executed(session, fact)
+            # State projection update (DOC-012 § B.2: "continuously
+            # recomputed read model").
+            await projection_engine.update_projection(session, redis_client, fact, _clock)
         logger.info(
             "fact_persisted",
             chain_id=fact.chain_id,
@@ -130,6 +148,16 @@ async def _run_live(settings: Settings, start_block: int | None) -> None:
             LogFilter(
                 address=None,  # Swap events from any pool
                 topic=SWAP_TOPIC,
+                dex=settings.dex,
+            ),
+            LogFilter(
+                address=None,  # Mint events from any pool
+                topic=MINT_TOPIC,
+                dex=settings.dex,
+            ),
+            LogFilter(
+                address=None,  # Burn events from any pool
+                topic=BURN_TOPIC,
                 dex=settings.dex,
             ),
         ],
