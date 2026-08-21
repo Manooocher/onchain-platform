@@ -33,6 +33,7 @@ from onchain_platform.domain_management import entity_resolution
 from onchain_platform.persistence.postgres import repositories
 from onchain_platform.platform.config import Settings
 from onchain_platform.platform.logging import configure_logging
+from onchain_platform.platform.scheduler import create_feature_scheduler
 from onchain_platform.processing.fact_processor import FactProcessor
 from onchain_platform.processing.finality_engine import FinalityEngine
 from onchain_platform.processing.normalizer import (
@@ -173,6 +174,17 @@ async def _run_live(settings: Settings, start_block: int | None) -> None:
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, collector.request_stop)
 
+    # Start Feature computation scheduler (DOC-010 § Job Scheduling).
+    # Hourly interval; max_instances=1 skips if previous job still running.
+    scheduler = create_feature_scheduler(
+        pg_engine=engine,
+        redis_client=redis_client,
+        chain_id=settings.chain_id,
+        clock=_clock,
+    )
+    scheduler.start()
+    logger.info("feature_scheduler_started", interval_seconds=3600)
+
     try:
         if effective_start is not None:
             await collector.process_range(effective_start, effective_start)
@@ -180,7 +192,9 @@ async def _run_live(settings: Settings, start_block: int | None) -> None:
             head = await provider.get_chain_head()
             await collector.run_from(head)
     finally:
+        scheduler.shutdown(wait=False)
         await provider.close()
+        await redis_client.aclose()
         await engine.dispose()
 
 
