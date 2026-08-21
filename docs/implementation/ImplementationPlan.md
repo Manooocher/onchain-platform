@@ -127,7 +127,7 @@ Nothing here is a design decision — everything below was already decided in DO
 
 **What gets built:** `analytics/feature_engine.py`. Start with something simple and well-understood — `liquidity_growth_pct_1h` and `price_momentum_zscore_1h` are enough to prove the shape. Every name gets a suffix from DOC-012 § Feature Naming Convention before it's merged, not after.
 
-**Definition of done:** a backtest-style query (`as_of` set to a past timestamp) and a live query (`as_of` defaulted to now) for the same feature use the *same code path* — this is the actual, executable meaning of "Point-in-Time correctness," not a principle to take on faith.
+**Definition of done:** a backtest-style query (`as_of` set to a past timestamp) and a live query (`as_of` defaulted to now) for the same feature use the *same code path* — this is the actual, executable meaning of "Point-in-Time correctness," not a principle to take on faith. ✅ Verified: `get_feature_at()` is the single code path for both backtest and live queries. Feature engine computes `liquidity_growth_pct_1h` and `price_momentum_zscore_1h` with Decimal intermediate math, Polars vectorization, PIT-filtered inputs. All gates green.
 
 ---
 
