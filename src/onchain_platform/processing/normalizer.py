@@ -30,6 +30,14 @@ PAIR_CREATED_TOPIC = "0x0d3648bd0f6ba80134a33ba9275ac585d9d315f0ad8355cddefde31a
 # DomainValidationError (DOC-012 § Known future extension: V3 is deferred).
 SWAP_TOPIC = "0xd78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822"
 
+# keccak256("Mint(address,uint256,uint256)") — Uniswap V2 Mint event.
+# Mint(address indexed sender, uint256 amount0, uint256 amount1).
+MINT_TOPIC = "0x4c209b5fc8ad50758f13e2e1088ba56a560dff690a1c6fef26394f4c03821c4f"
+
+# keccak256("Burn(address,uint256,uint256)") — Uniswap V2 Burn event.
+# Burn(address indexed sender, uint256 amount0, uint256 amount1).
+BURN_TOPIC = "0x49995e5dd6158cf69ad3e9777c46755a1a826a446c6416992167462dad033b2a"
+
 _ADDRESS_WORD_BYTES = 32
 _ADDRESS_BYTES = 20
 
@@ -77,6 +85,33 @@ class NormalizedSwapEvent:
     amount1_in: str
     amount0_out: str
     amount1_out: str
+    block_number: int
+    block_hash: str
+    tx_hash: str
+    log_index: int
+    event_time: datetime
+    dex: str
+
+
+@dataclass(frozen=True)
+class NormalizedLiquidityEvent:
+    """Canonical shape of one decoded Mint or Burn log.
+
+    V2 Mint/Burn ABI: Mint(address indexed sender, uint256 amount0,
+    uint256 amount1) / Burn(address indexed sender, uint256 amount0,
+    uint256 amount1). sender is indexed (topic 1); amounts are in data
+    (two 32-byte words).
+
+    Both amounts are positive magnitudes; direction comes from fact_type
+    (DOC-012 § B.1: "liquidity_delta is always a positive magnitude.
+    Direction comes exclusively from fact_type"). All amounts are decimal
+    strings — raw on-chain integers (DOC-008 § Token Amount).
+    """
+
+    pool_address: str
+    provider: str  # sender address, EIP-55 checksummed
+    amount0: str
+    amount1: str
     block_number: int
     block_hash: str
     tx_hash: str
@@ -232,6 +267,63 @@ def normalize_swap(collected: CollectedLog) -> NormalizedSwapEvent:
         amount1_in=str(amount1_in),
         amount0_out=str(amount0_out),
         amount1_out=str(amount1_out),
+        block_number=raw.block_number,
+        block_hash=raw.block_hash,
+        tx_hash=raw.transaction_hash,
+        log_index=raw.log_index,
+        event_time=collected.block.timestamp,
+        dex=collected.dex,
+    )
+
+
+def normalize_liquidity(collected: CollectedLog) -> NormalizedLiquidityEvent:
+    """Decode one collected Mint or Burn log into its canonical shape.
+
+    V2 Mint/Burn ABI: Mint(address indexed sender, uint256 amount0,
+    uint256 amount1) / Burn(address indexed sender, uint256 amount0,
+    uint256 amount1). sender is indexed (topic 1); amounts are in data
+    (two 32-byte words).
+
+    Both amounts are positive magnitudes; direction comes from fact_type
+    (DOC-012 § B.1). All amounts are decimal strings — raw on-chain
+    integers (DOC-008 § Token Amount). Never float.
+    """
+    raw = collected.raw_log
+    if raw.removed:
+        raise DomainValidationError(
+            f"refusing to normalize a removed log (tx={raw.transaction_hash}, "
+            f"logIndex={raw.log_index})"
+        )
+    if len(raw.topics) < 2:
+        raise DomainValidationError(
+            f"Mint/Burn requires 2 topics (signature + sender), got {len(raw.topics)}"
+        )
+    topic0 = raw.topics[0]
+    if topic0 not in (MINT_TOPIC, BURN_TOPIC):
+        raise DomainValidationError(f"topic0 {topic0!r} is not a V2 Mint or Burn signature")
+
+    # data: 2 x 32-byte words = amount0, amount1.
+    data_hex = raw.data.removeprefix("0x")
+    if len(data_hex) != 2 * _ADDRESS_WORD_BYTES * 2:
+        raise DomainValidationError(
+            f"Mint/Burn data must be exactly 2 32-byte words, got {len(data_hex) // 2} bytes"
+        )
+
+    amount0 = _data_word_to_int(data_hex, 0)
+    amount1 = _data_word_to_int(data_hex, 1)
+
+    # Both amounts must be > 0 (DOC-012 B.1: "always positive magnitudes").
+    if amount0 <= 0 or amount1 <= 0:
+        raise DomainValidationError(
+            f"Mint/Burn amounts must be positive: amount0={amount0}, amount1={amount1} "
+            f"(tx={raw.transaction_hash}, logIndex={raw.log_index})"
+        )
+
+    return NormalizedLiquidityEvent(
+        pool_address=to_checksum_address(raw.address),
+        provider=_topic_to_address(raw.topics[1], "provider"),
+        amount0=str(amount0),
+        amount1=str(amount1),
         block_number=raw.block_number,
         block_hash=raw.block_hash,
         tx_hash=raw.transaction_hash,

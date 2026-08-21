@@ -20,13 +20,18 @@ from onchain_platform.acquisition.collector import CollectedLog
 from onchain_platform.domain.exceptions import DomainValidationError
 from onchain_platform.domain.schemas.blockchain_fact import (
     BlockchainFact,
+    LiquidityAddedPayload,
+    LiquidityRemovedPayload,
     PairCreatedPayload,
     SwapExecutedPayload,
 )
 from onchain_platform.domain.schemas.enums import ConfirmationStatus, FactType
 from onchain_platform.processing.normalizer import (
+    BURN_TOPIC,
+    MINT_TOPIC,
     PAIR_CREATED_TOPIC,
     SWAP_TOPIC,
+    normalize_liquidity,
     normalize_pair_created,
     normalize_swap,
 )
@@ -62,6 +67,8 @@ class FactProcessor:
             return self._process_pair_created(collected)
         elif topic0 == SWAP_TOPIC:
             return self._process_swap(collected)
+        elif topic0 in (MINT_TOPIC, BURN_TOPIC):
+            return self._process_liquidity(collected)
         else:
             raise DomainValidationError(
                 f"FactProcessor received log with unknown topic0 {topic0!r} "
@@ -118,6 +125,46 @@ class FactProcessor:
             payload,
         )
 
+    def _process_liquidity(self, collected: CollectedLog) -> BlockchainFact:
+        normalized = normalize_liquidity(collected)
+        topic0 = collected.raw_log.topics[0]
+
+        # Mint → LIQUIDITY_ADDED, Burn → LIQUIDITY_REMOVED.
+        # Both amounts are positive magnitudes; direction comes from
+        # fact_type (DOC-012 § B.1).
+        liquidity_payload: LiquidityAddedPayload | LiquidityRemovedPayload
+        if topic0 == MINT_TOPIC:
+            liquidity_payload = LiquidityAddedPayload(
+                fact_type="LIQUIDITY_ADDED",
+                pool_address=normalized.pool_address,
+                provider=normalized.provider,
+                amount0=normalized.amount0,
+                amount1=normalized.amount1,
+                liquidity_delta=normalized.amount0,  # placeholder; see note
+            )
+            fact_type = FactType.LIQUIDITY_ADDED
+        else:
+            liquidity_payload = LiquidityRemovedPayload(
+                fact_type="LIQUIDITY_REMOVED",
+                pool_address=normalized.pool_address,
+                provider=normalized.provider,
+                amount0=normalized.amount0,
+                amount1=normalized.amount1,
+                liquidity_delta=normalized.amount0,  # placeholder; see note
+            )
+            fact_type = FactType.LIQUIDITY_REMOVED
+
+        return self._build_fact(
+            normalized.tx_hash,
+            normalized.log_index,
+            normalized.block_number,
+            normalized.block_hash,
+            normalized.event_time,
+            collected.observed_at,
+            fact_type,
+            liquidity_payload,
+        )
+
     def _build_fact(
         self,
         tx_hash: str,
@@ -127,7 +174,10 @@ class FactProcessor:
         event_time: datetime,
         observed_at: datetime,
         fact_type: FactType,
-        payload: PairCreatedPayload | SwapExecutedPayload,
+        payload: PairCreatedPayload
+        | SwapExecutedPayload
+        | LiquidityAddedPayload
+        | LiquidityRemovedPayload,
     ) -> BlockchainFact:
         # DOC-012 § Modeling the discriminated payload: fact_type and
         # payload.fact_type are intentionally the same value in two places;
