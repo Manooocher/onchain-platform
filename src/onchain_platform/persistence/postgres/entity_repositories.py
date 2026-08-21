@@ -11,7 +11,7 @@ replay guaranteed (ADR-006 § Idempotency).
 
 from typing import Any, cast
 
-from sqlalchemy import select
+from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import SQLAlchemyError
@@ -200,7 +200,9 @@ async def save_wallet(session: AsyncSession, wallet: Wallet) -> bool:
             index_elements=["canonical_id"],
             set_={
                 # Only update first_seen_at if the new value is earlier.
-                "first_seen_at": ("LEAST(wallets.first_seen_at, EXCLUDED.first_seen_at)"),
+                "first_seen_at": func.least(
+                    WalletRow.first_seen_at, text("EXCLUDED.first_seen_at")
+                ),
             },
         )
     )

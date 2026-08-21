@@ -50,3 +50,19 @@ def clean_facts(pg_engine: AsyncEngine) -> Callable[[], Awaitable[None]]:
             await conn.execute(text("TRUNCATE blockchain_facts"))
 
     return _clean
+
+
+@pytest.fixture
+def clean_entities(pg_engine: AsyncEngine) -> Callable[[], Awaitable[None]]:
+    """Truncate all Part A entity tables + metadata for test isolation."""
+
+    async def _clean() -> None:
+        async with pg_engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "TRUNCATE metadata, smart_contracts, wallets, "
+                    "liquidity_pools, trading_pairs, tokens CASCADE"
+                )
+            )
+
+    return _clean
