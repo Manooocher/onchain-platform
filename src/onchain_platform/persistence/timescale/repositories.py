@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 from typing import Any, cast
 
 from sqlalchemy import (
+    ARRAY,
     BigInteger,
     Boolean,
     CheckConstraint,
@@ -35,6 +36,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from onchain_platform.domain.exceptions import PersistenceError
 from onchain_platform.domain.schemas.enums import BarInterval
+from onchain_platform.domain.schemas.feature import Feature
 from onchain_platform.domain.schemas.market_bar import MarketBar
 from onchain_platform.domain.schemas.observation_snapshot import ObservationSnapshot
 
@@ -371,3 +373,169 @@ async def list_snapshots(
     except SQLAlchemyError as exc:
         raise PersistenceError(f"failed to list ObservationSnapshots for {entity_id}") from exc
     return [_row_to_snapshot(row) for row in rows]
+
+
+# ---------------------------------------------------------------------------
+# Feature (DOC-012 § B.3)
+# ---------------------------------------------------------------------------
+
+# Entity types for Feature.entity_type (DOC-012 § B.3).
+_ENTITY_TYPE_ENUM_NAME = "entity_type_feature_enum"
+
+
+class FeatureRow(TimescaleBase):
+    """Feature hypertable (DOC-012 § B.3, DOC-014 § TimescaleDB Hypertables).
+
+    Partitioned by as_of_timestamp (1-day chunks). Compression policy:
+    compress chunks older than 7 days.
+
+    value is DOUBLE PRECISION — one of only two genuinely float fields in
+    the schema set (DOC-014 § Type Mapping Rules, "Genuinely float";
+    DOC-012 § Clarifying an ambiguity in DOC-008).
+    """
+
+    __tablename__ = "features"
+
+    feature_id: Mapped[str] = mapped_column(Text, nullable=False)
+    schema_version: Mapped[str] = mapped_column(Text, nullable=False, server_default="1.0")
+    feature_name: Mapped[str] = mapped_column(Text, nullable=False)
+    entity_id: Mapped[str] = mapped_column(Text, nullable=False)
+    entity_type: Mapped[str] = mapped_column(Text, nullable=False)
+    # as_of_timestamp is part of the PK because TimescaleDB hypertables
+    # require the partitioning column in any unique index.
+    as_of_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
+    computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    window: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # DOUBLE PRECISION — genuinely float (DOC-014, DOC-012 § Clarifying
+    # an ambiguity). All other financial fields remain Decimal/str.
+    value: Mapped[float] = mapped_column(nullable=False)
+    # Traceability: IDs of source Snapshots/Bars (DOC-012 § Traceability
+    # Chain).
+    inputs: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False)
+
+    __table_args__ = (
+        Index(
+            "ix_features_entity_name_time",
+            "entity_id",
+            "feature_name",
+            "as_of_timestamp",
+            postgresql_using="btree",
+        ),
+    )
+
+
+def _feature_to_row_values(feat: Feature) -> dict[str, object]:
+    return {
+        "feature_id": feat.feature_id,
+        "schema_version": feat.schema_version,
+        "feature_name": feat.feature_name,
+        "entity_id": feat.entity_id,
+        "entity_type": feat.entity_type,
+        "as_of_timestamp": feat.as_of_timestamp,
+        "computed_at": feat.computed_at,
+        "window": feat.window,
+        "value": feat.value,
+        "inputs": feat.inputs,
+    }
+
+
+def _row_to_feature(row: FeatureRow) -> Feature:
+    from onchain_platform.domain.schemas.feature import Feature
+
+    return Feature(
+        feature_id=row.feature_id,
+        feature_name=row.feature_name,
+        entity_id=row.entity_id,
+        entity_type=row.entity_type,
+        as_of_timestamp=_ensure_utc(row.as_of_timestamp),
+        computed_at=_ensure_utc(row.computed_at),
+        window=row.window,
+        value=row.value,
+        inputs=row.inputs,
+    )
+
+
+async def save_feature(session: AsyncSession, feat: Feature) -> bool:
+    """Upsert a Feature (INSERT ON CONFLICT UPDATE on composite key).
+
+    Idempotent re-computation: if the same feature_name + entity_id +
+    as_of_timestamp is computed again, the latest values overwrite.
+    """
+    stmt = (
+        pg_insert(FeatureRow)
+        .values(**_feature_to_row_values(feat))
+        .on_conflict_do_update(
+            index_elements=["feature_id", "as_of_timestamp"],
+            set_={
+                k: v
+                for k, v in _feature_to_row_values(feat).items()
+                if k not in ("feature_id", "as_of_timestamp")
+            },
+        )
+    )
+    try:
+        result = cast("CursorResult[Any]", await session.execute(stmt))
+        await session.commit()
+    except SQLAlchemyError as exc:
+        raise PersistenceError(f"failed to save Feature {feat.feature_id}") from exc
+    return bool(result.rowcount == 1)
+
+
+async def get_feature_at(
+    session: AsyncSession,
+    entity_id: str,
+    feature_name: str,
+    as_of: datetime | None = None,
+) -> Feature | None:
+    """Point-in-Time query: most recent Feature with as_of_timestamp <= as_of.
+
+    DOC-012 § B.3: 'as_of_timestamp — The point-in-time this value is
+    valid for. This is the field every PIT-correctness query filters on.'
+    DOC-014 § Indexing Strategy: (entity_id, feature_name, as_of_timestamp
+    DESC).
+    """
+
+    if as_of is None:
+        as_of = datetime.now(UTC)
+
+    stmt = (
+        select(FeatureRow)
+        .where(
+            FeatureRow.entity_id == entity_id,
+            FeatureRow.feature_name == feature_name,
+            FeatureRow.as_of_timestamp <= as_of,
+        )
+        .order_by(FeatureRow.as_of_timestamp.desc())
+        .limit(1)
+    )
+    try:
+        row = (await session.execute(stmt)).scalar_one_or_none()
+    except SQLAlchemyError as exc:
+        raise PersistenceError(f"failed to query Feature {feature_name} for {entity_id}") from exc
+    return _row_to_feature(row) if row is not None else None
+
+
+async def list_features(
+    session: AsyncSession,
+    entity_id: str,
+    feature_name: str,
+    from_time: datetime,
+    to_time: datetime,
+) -> list[Feature]:
+    """List Features for an entity in a time range."""
+
+    stmt = (
+        select(FeatureRow)
+        .where(
+            FeatureRow.entity_id == entity_id,
+            FeatureRow.feature_name == feature_name,
+            FeatureRow.as_of_timestamp >= from_time,
+            FeatureRow.as_of_timestamp < to_time,
+        )
+        .order_by(FeatureRow.as_of_timestamp)
+    )
+    try:
+        rows = (await session.execute(stmt)).scalars().all()
+    except SQLAlchemyError as exc:
+        raise PersistenceError(f"failed to list Features for {entity_id}") from exc
+    return [_row_to_feature(row) for row in rows]
