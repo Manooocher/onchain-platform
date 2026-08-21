@@ -26,6 +26,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engin
 from onchain_platform.acquisition.collector import CollectedLog, Collector, LogFilter
 from onchain_platform.acquisition.providers.local_node import LocalNodeProvider
 from onchain_platform.domain.exceptions import DomainValidationError, PlatformError
+from onchain_platform.domain.schemas.enums import FactType
+from onchain_platform.domain_management import entity_resolution
 from onchain_platform.persistence.postgres import repositories
 from onchain_platform.platform.config import Settings
 from onchain_platform.platform.logging import configure_logging
@@ -98,8 +100,15 @@ async def _run_live(settings: Settings, start_block: int | None) -> None:
     async def handler(collected: CollectedLog) -> None:
         fact = processor.process(collected)
         # Session scoped to this call (DOC-013 § Async Conventions).
+        # Entity resolution runs in the same session as fact persistence —
+        # atomic, no partial state (ImplementationPlan § Milestone 4).
         async with AsyncSession(engine, expire_on_commit=False) as session:
             inserted = await repositories.save_fact(session, fact)
+            # Eager entity resolution (DOC-004 simplicity principle).
+            if fact.fact_type == FactType.PAIR_CREATED:
+                await entity_resolution.resolve_from_pair_created(session, fact)
+            elif fact.fact_type == FactType.SWAP_EXECUTED:
+                await entity_resolution.resolve_from_swap_executed(session, fact)
         logger.info(
             "fact_persisted",
             chain_id=fact.chain_id,
