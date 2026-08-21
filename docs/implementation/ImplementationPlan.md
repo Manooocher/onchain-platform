@@ -107,7 +107,7 @@ Nothing here is a design decision — everything below was already decided in DO
 
 **What gets built:** `domain_management/entity_resolution.py`, `domain_management/wallet_service.py`, `domain_management/metadata_service.py`; `persistence/postgres/models.py` (Part A tables). Metadata enrichment can start as a stub (empty/`UNVERIFIED` for every token) — real provider integration is a Day-1-of-this-milestone decision, not a blocker to starting it (see § Open Decisions).
 
-**Definition of done:** every `TradingPair` from Milestone 1–3's facts has a resolved `Token` on both sides, with a stable Canonical ID.
+**Definition of done:** every `TradingPair` from Milestone 1–3's facts has a resolved `Token` on both sides, with a stable Canonical ID. ✅ Verified: entity resolution runs eagerly on PairCreated ingestion, creating Token + TradingPair + LiquidityPool + SmartContract entities with stable Canonical IDs (eip155:<chain_id>/<type>:<address>). Idempotent upserts proven via replay test. Wallet entities created on SwapExecuted. All gates green.
 
 ---
 
