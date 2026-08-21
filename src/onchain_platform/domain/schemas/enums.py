@@ -60,3 +60,11 @@ class BarInterval(StrEnum):
             "15m": 900,
             "1h": 3600,
         }[self.value]
+
+
+class EntityType(StrEnum):
+    """Entity types for Feature.entity_type (DOC-012 § B.3)."""
+
+    TRADING_PAIR = "TRADING_PAIR"
+    WALLET = "WALLET"
+    TOKEN = "TOKEN"
