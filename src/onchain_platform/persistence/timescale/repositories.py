@@ -13,6 +13,7 @@ mappings — tuple stored as two columns).
 """
 
 from datetime import UTC, datetime
+from typing import Any, cast
 
 from sqlalchemy import (
     BigInteger,
@@ -27,6 +28,7 @@ from sqlalchemy import (
     select,
 )
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -34,6 +36,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from onchain_platform.domain.exceptions import PersistenceError
 from onchain_platform.domain.schemas.enums import BarInterval
 from onchain_platform.domain.schemas.market_bar import MarketBar
+from onchain_platform.domain.schemas.observation_snapshot import ObservationSnapshot
 
 
 class TimescaleBase(DeclarativeBase):
@@ -218,3 +221,153 @@ async def get_bar(session: AsyncSession, bar_id: str) -> MarketBar | None:
     except SQLAlchemyError as exc:
         raise PersistenceError(f"failed to read MarketBar {bar_id}") from exc
     return _row_to_bar(row) if row is not None else None
+
+
+# ---------------------------------------------------------------------------
+# ObservationSnapshot (DOC-012 § B.3)
+# ---------------------------------------------------------------------------
+
+
+class ObservationSnapshotRow(TimescaleBase):
+    """ObservationSnapshot hypertable (DOC-012 § B.3, DOC-014 § TimescaleDB
+    Hypertables).
+
+    Partitioned by snapshot_timestamp (1-day chunks). Compression policy:
+    compress chunks older than 7 days.
+    """
+
+    __tablename__ = "observation_snapshots"
+
+    snapshot_id: Mapped[str] = mapped_column(Text, nullable=False)
+    schema_version: Mapped[str] = mapped_column(Text, nullable=False, server_default="1.0")
+    entity_id: Mapped[str] = mapped_column(Text, nullable=False)
+    chain_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    # snapshot_timestamp is part of the PK because TimescaleDB hypertables
+    # require the partitioning column in any unique index (same pattern as
+    # market_bars.bar_start_time).
+    snapshot_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ingested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    source: Mapped[str] = mapped_column(Text, nullable=False)
+    snapshot_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    reserve0: Mapped[str] = mapped_column(Numeric, nullable=False)
+    reserve1: Mapped[str] = mapped_column(Numeric, nullable=False)
+    price: Mapped[str] = mapped_column(Numeric, nullable=False)
+    liquidity_usd: Mapped[str | None] = mapped_column(Numeric, nullable=True)
+    holder_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    market_cap_usd: Mapped[str | None] = mapped_column(Numeric, nullable=True)
+    fdv_usd: Mapped[str | None] = mapped_column(Numeric, nullable=True)
+
+    __table_args__ = (
+        Index(
+            "ix_observation_snapshots_entity_time",
+            "entity_id",
+            "snapshot_timestamp",
+            postgresql_using="btree",
+        ),
+    )
+
+
+def _snapshot_to_row_values(snap: ObservationSnapshot) -> dict[str, object]:
+    return {
+        "snapshot_id": snap.snapshot_id,
+        "schema_version": snap.schema_version,
+        "entity_id": snap.entity_id,
+        "chain_id": snap.chain_id,
+        "snapshot_timestamp": snap.snapshot_timestamp,
+        "observed_at": snap.observed_at,
+        "ingested_at": snap.ingested_at,
+        "source": snap.source,
+        "snapshot_version": snap.snapshot_version,
+        "reserve0": snap.reserve0,
+        "reserve1": snap.reserve1,
+        "price": snap.price,
+        "liquidity_usd": snap.liquidity_usd,
+        "holder_count": snap.holder_count,
+        "market_cap_usd": snap.market_cap_usd,
+        "fdv_usd": snap.fdv_usd,
+    }
+
+
+def _row_to_snapshot(row: ObservationSnapshotRow) -> ObservationSnapshot:
+    return ObservationSnapshot(
+        snapshot_id=row.snapshot_id,
+        entity_id=row.entity_id,
+        chain_id=row.chain_id,
+        snapshot_timestamp=_ensure_utc(row.snapshot_timestamp),
+        observed_at=_ensure_utc(row.observed_at),
+        ingested_at=_ensure_utc(row.ingested_at),
+        source=row.source,
+        snapshot_version=row.snapshot_version,
+        reserve0=str(row.reserve0),
+        reserve1=str(row.reserve1),
+        price=str(row.price),
+        liquidity_usd=str(row.liquidity_usd) if row.liquidity_usd is not None else None,
+        holder_count=row.holder_count,
+        market_cap_usd=str(row.market_cap_usd) if row.market_cap_usd is not None else None,
+        fdv_usd=str(row.fdv_usd) if row.fdv_usd is not None else None,
+    )
+
+
+async def save_snapshot(session: AsyncSession, snap: ObservationSnapshot) -> bool:
+    """Upsert an ObservationSnapshot (INSERT ON CONFLICT UPDATE on
+    snapshot_id). DOC-012 § B.3 composite key includes source so two
+    sources snapshotting the same entity at the same instant never collide."""
+    stmt = (
+        pg_insert(ObservationSnapshotRow)
+        .values(**_snapshot_to_row_values(snap))
+        .on_conflict_do_update(
+            index_elements=["snapshot_id", "snapshot_timestamp"],
+            set_={
+                k: v
+                for k, v in _snapshot_to_row_values(snap).items()
+                if k not in ("snapshot_id", "snapshot_timestamp")
+            },
+        )
+    )
+    try:
+        result = cast("CursorResult[Any]", await session.execute(stmt))
+        await session.commit()
+    except SQLAlchemyError as exc:
+        raise PersistenceError(f"failed to save ObservationSnapshot {snap.snapshot_id}") from exc
+    return bool(result.rowcount == 1)
+
+
+async def get_latest_snapshot(session: AsyncSession, entity_id: str) -> ObservationSnapshot | None:
+    """Most recent snapshot for an entity (DOC-014 § Indexing Strategy)."""
+    stmt = (
+        select(ObservationSnapshotRow)
+        .where(ObservationSnapshotRow.entity_id == entity_id)
+        .order_by(ObservationSnapshotRow.snapshot_timestamp.desc())
+        .limit(1)
+    )
+    try:
+        row = (await session.execute(stmt)).scalar_one_or_none()
+    except SQLAlchemyError as exc:
+        raise PersistenceError(
+            f"failed to read latest ObservationSnapshot for {entity_id}"
+        ) from exc
+    return _row_to_snapshot(row) if row is not None else None
+
+
+async def list_snapshots(
+    session: AsyncSession,
+    entity_id: str,
+    from_time: datetime,
+    to_time: datetime,
+) -> list[ObservationSnapshot]:
+    """List snapshots for an entity in a time range."""
+    stmt = (
+        select(ObservationSnapshotRow)
+        .where(
+            ObservationSnapshotRow.entity_id == entity_id,
+            ObservationSnapshotRow.snapshot_timestamp >= from_time,
+            ObservationSnapshotRow.snapshot_timestamp < to_time,
+        )
+        .order_by(ObservationSnapshotRow.snapshot_timestamp)
+    )
+    try:
+        rows = (await session.execute(stmt)).scalars().all()
+    except SQLAlchemyError as exc:
+        raise PersistenceError(f"failed to list ObservationSnapshots for {entity_id}") from exc
+    return [_row_to_snapshot(row) for row in rows]
