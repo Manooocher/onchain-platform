@@ -18,7 +18,7 @@ Polars runs multi-threaded (default) — replay tests use tolerance for
 float fields, never byte-identical.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 import polars as pl
@@ -53,8 +53,12 @@ async def compute_liquidity_growth_pct_1h(
 
     PIT correctness: only uses snapshots with snapshot_timestamp <= as_of.
     """
-    from_time = as_of - __import__("datetime").timedelta(hours=1)
-    snapshots = await ts_repos.list_snapshots(session, entity_id, from_time, as_of)
+    from_time = as_of - timedelta(hours=1)
+    # list_snapshots uses exclusive upper bound (< to_time). Add epsilon
+    # to include snapshots at exactly as_of (PIT semantics: data available
+    # at or before as_of).
+    upper = as_of + timedelta(seconds=1)
+    snapshots = await ts_repos.list_snapshots(session, entity_id, from_time, upper)
 
     if len(snapshots) < 2:
         logger.debug(
@@ -111,8 +115,9 @@ async def compute_price_momentum_zscore_1h(
 
     PIT correctness: only uses bars with bar_start_time <= as_of.
     """
-    from_time = as_of - __import__("datetime").timedelta(hours=1)
-    bars = await ts_repos.list_bars(session, entity_id, BarInterval.ONE_MINUTE, from_time, as_of)
+    from_time = as_of - timedelta(hours=1)
+    upper = as_of + timedelta(seconds=1)
+    bars = await ts_repos.list_bars(session, entity_id, BarInterval.ONE_MINUTE, from_time, upper)
 
     if len(bars) < 2:
         logger.debug(

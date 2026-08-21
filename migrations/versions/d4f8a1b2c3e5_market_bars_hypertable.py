@@ -40,7 +40,7 @@ def upgrade() -> None:
             schema_version      TEXT        NOT NULL DEFAULT '1.0',
             pair_id             TEXT        NOT NULL,
             chain_id            BIGINT      NOT NULL,
-            interval            bar_interval_enum NOT NULL,
+            interval            TEXT NOT NULL,
             bar_start_time      TIMESTAMPTZ NOT NULL,
             bar_end_time        TIMESTAMPTZ NOT NULL,
             -- OHLCV: NUMERIC (unconstrained precision, DOC-014 § Type

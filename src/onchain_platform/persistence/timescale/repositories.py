@@ -21,7 +21,6 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     DateTime,
-    Enum,
     Index,
     Integer,
     Numeric,
@@ -59,10 +58,7 @@ class MarketBarRow(TimescaleBase):
     schema_version: Mapped[str] = mapped_column(Text, nullable=False, server_default="1.0")
     pair_id: Mapped[str] = mapped_column(Text, nullable=False)
     chain_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    interval: Mapped[BarInterval] = mapped_column(
-        Enum(BarInterval, name="bar_interval_enum", native_enum=True),
-        nullable=False,
-    )
+    interval: Mapped[str] = mapped_column(Text, nullable=False)
     # bar_start_time is part of the PK because TimescaleDB hypertables
     # require the partitioning column in any unique index.
     bar_start_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
@@ -114,7 +110,7 @@ def _bar_to_row_values(bar: MarketBar) -> dict[str, object]:
         "schema_version": bar.schema_version,
         "pair_id": bar.pair_id,
         "chain_id": bar.chain_id,
-        "interval": bar.interval,
+        "interval": bar.interval.value,
         "bar_start_time": bar.bar_start_time,
         "bar_end_time": bar.bar_end_time,
         "open": bar.open,
@@ -141,7 +137,7 @@ def _row_to_bar(row: MarketBarRow) -> MarketBar:
         bar_id=row.bar_id,
         pair_id=row.pair_id,
         chain_id=row.chain_id,
-        interval=row.interval,
+        interval=BarInterval(row.interval),
         bar_start_time=_ensure_utc(row.bar_start_time),
         bar_end_time=_ensure_utc(row.bar_end_time),
         open=str(row.open),
