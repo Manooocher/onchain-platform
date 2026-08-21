@@ -135,7 +135,7 @@ async def test_replay_reorg_marks_divergent_facts_orphaned(
         handler=handler,
         clock=lambda: PINNED_TIME,
         poll_interval_seconds=0.0,
-        finality_engine=finality_engine,
+        on_block_processed=finality_engine.on_new_block,
     )
 
     # Process canonical chain 100..110.

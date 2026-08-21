@@ -36,7 +36,6 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING
 
 import structlog
 
@@ -46,9 +45,6 @@ from onchain_platform.acquisition.providers.base import (
     RawLog,
 )
 from onchain_platform.domain.exceptions import AcquisitionError
-
-if TYPE_CHECKING:
-    from onchain_platform.processing.finality_engine import FinalityEngine
 
 logger = structlog.get_logger(__name__)
 
@@ -107,7 +103,7 @@ class Collector:
         handler: CollectedHandler,
         clock: Callable[[], datetime],
         poll_interval_seconds: float = 2.0,
-        finality_engine: "FinalityEngine | None" = None,
+        on_block_processed: Callable[[int], Awaitable[None]] | None = None,
     ) -> None:
         self._provider = provider
         self._chain_id = chain_id
@@ -116,12 +112,10 @@ class Collector:
         self._clock = clock
         self._poll_interval_seconds = poll_interval_seconds
         self._stop_requested = False
-        # Milestone 2: optional finality engine. When provided, the
-        # collector calls on_new_block() after processing each block's
-        # facts, advancing the Confirmation Lifecycle (ADR-006 § Finality
-        # Engine). When None (Milestone 1 behavior), no finality processing
-        # occurs — facts persist as PENDING only.
-        self._finality_engine = finality_engine
+        # Milestone 2: optional callback invoked after each block's facts
+        # are persisted. Wired by main.py to finality_engine.on_new_block.
+        # When None (Milestone 1 behavior), no post-block processing occurs.
+        self._on_block_processed = on_block_processed
 
     def request_stop(self) -> None:
         """Ask the collector to stop after the in-flight block completes
@@ -192,12 +186,11 @@ class Collector:
             logs_forwarded=forwarded,
         )
         # Milestone 2: after all facts for this block are persisted as
-        # PENDING, notify the finality engine to advance the Confirmation
-        # Lifecycle (ADR-006 § Finality Engine). The engine handles
-        # confirmation advancement, reorg detection, and checkpoint writes
-        # internally.
-        if self._finality_engine is not None:
-            await self._finality_engine.on_new_block(block_number)
+        # PENDING, invoke the post-block callback (wired by main.py to
+        # finality_engine.on_new_block). The callback handles confirmation
+        # advancement, reorg detection, and checkpoint writes internally.
+        if self._on_block_processed is not None:
+            await self._on_block_processed(block_number)
         return forwarded
 
     async def run_from(self, start_block: int) -> None:
