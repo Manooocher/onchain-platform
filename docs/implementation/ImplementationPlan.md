@@ -117,7 +117,7 @@ Nothing here is a design decision — everything below was already decided in DO
 
 **What gets built:** `analytics/projection_engine.py`, `transport/state_cache.py`, second and third hypertables (`observation_snapshots`, plus indexes from DOC-014).
 
-**Definition of done:** killing and restarting the Projection Engine rebuilds identical state purely by replaying Facts — the concrete proof of DOC-006's "State can always be reconstructed."
+**Definition of done:** killing and restarting the Projection Engine rebuilds identical state purely by replaying Facts — the concrete proof of DOC-006's "State can always be reconstructed." ✅ Verified: projection engine rebuilds state from FINALIZED facts on startup, Decimal reserve/price computation correct, ObservationSnapshot hypertable operational, all gates green.
 
 ---
 

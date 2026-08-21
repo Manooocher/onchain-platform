@@ -27,9 +27,12 @@ from onchain_platform.acquisition.collector import CollectedLog, Collector, LogF
 from onchain_platform.domain.schemas.blockchain_fact import (
     BlockchainFact,
     PairCreatedPayload,
+    SwapExecutedPayload,
 )
+from onchain_platform.domain.schemas.enums import FactType
 from onchain_platform.persistence.postgres import repositories
 from onchain_platform.processing.fact_processor import FactProcessor
+from onchain_platform.processing.normalizer import PAIR_CREATED_TOPIC, SWAP_TOPIC
 from tests.replay.fixture_provider import FIXTURES_DIR, FixtureProvider
 
 FIXTURE_PATH = FIXTURES_DIR / "base_pair_created_13500000_13500024.json"
@@ -183,3 +186,44 @@ async def test_replay_into_real_postgres_is_idempotent(
     assert isinstance(sample_payload, PairCreatedPayload)
     assert sample_payload.token0_address == SAMPLE_TOKEN0
     assert sample_payload.pair_address == SAMPLE_PAIR
+
+
+async def test_replay_produces_correct_state_projection() -> None:
+    """After replaying the fixture, verify that Swap facts have str amounts
+    (zero-tolerance, DOC-008 § Financial Precision)."""
+    provider = FixtureProvider(FIXTURE_PATH)
+    processor = FactProcessor(chain_id=CHAIN_ID, clock=lambda: provider.ingested_at)
+
+    facts: list[BlockchainFact] = []
+
+    async def handler(collected: CollectedLog) -> None:
+        facts.append(processor.process(collected))
+
+    collector = Collector(
+        provider,
+        chain_id=CHAIN_ID,
+        filters=[
+            LogFilter(address=provider.factory_address, topic=PAIR_CREATED_TOPIC, dex=DEX),
+            LogFilter(address=None, topic=SWAP_TOPIC, dex=DEX),
+        ],
+        handler=handler,
+        clock=lambda: provider.observed_at,
+        poll_interval_seconds=0.0,
+    )
+
+    await collector.process_range(provider.from_block, provider.to_block)
+
+    # Verify we got both PairCreated and SwapExecuted facts.
+    pair_facts = [f for f in facts if f.fact_type == FactType.PAIR_CREATED]
+    swap_facts = [f for f in facts if f.fact_type == FactType.SWAP_EXECUTED]
+    assert len(pair_facts) == 5
+    assert len(swap_facts) == 5
+
+    # Verify all Swap facts have str amounts (zero-tolerance, DOC-008).
+    for fact in swap_facts:
+        payload = fact.payload
+        assert isinstance(payload, SwapExecutedPayload)
+        assert isinstance(payload.amount0_in, str)
+        assert isinstance(payload.amount1_in, str)
+        assert isinstance(payload.amount0_out, str)
+        assert isinstance(payload.amount1_out, str)
