@@ -68,3 +68,14 @@ class EntityType(StrEnum):
     TRADING_PAIR = "TRADING_PAIR"
     WALLET = "WALLET"
     TOKEN = "TOKEN"
+
+
+class Importance(StrEnum):
+    """Insight importance level (DOC-012 § B.4).
+
+    A qualitative editorial signal, explicitly NOT an ML confidence score.
+    """
+
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
