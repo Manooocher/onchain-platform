@@ -79,3 +79,15 @@ class Importance(StrEnum):
     LOW = "LOW"
     MEDIUM = "MEDIUM"
     HIGH = "HIGH"
+
+
+class OutcomeType(StrEnum):
+    """Outcome label types (DOC-012 § B.4).
+
+    Ground-truth labels assigned after an observation window closes
+    (DOC-008 § Outcome). No confidence — confidence belongs to Predictions.
+    """
+
+    RUG_PULL = "RUG_PULL"
+    SUCCESSFUL_LAUNCH = "SUCCESSFUL_LAUNCH"
+    DEAD_TOKEN = "DEAD_TOKEN"

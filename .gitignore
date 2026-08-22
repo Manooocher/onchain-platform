@@ -25,3 +25,6 @@ dist/
 build/
 
 *.egg-info/
+
+# Planning artifacts not part of the codebase (Milestone 8 audit/plan outputs)
+AUDIT_REPORT_*.md
