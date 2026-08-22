@@ -31,6 +31,7 @@ from onchain_platform.domain.exceptions import DomainValidationError, PlatformEr
 from onchain_platform.domain.ids import pair_canonical_id
 from onchain_platform.domain.schemas.enums import FactType
 from onchain_platform.domain_management import entity_resolution
+from onchain_platform.intelligence.intelligence_job import run_intelligence_scan
 from onchain_platform.persistence.postgres import entity_repositories as entity_repos
 from onchain_platform.persistence.postgres import repositories
 from onchain_platform.persistence.timescale import repositories as ts_repos
@@ -207,8 +208,24 @@ async def _run_live(settings: Settings, start_block: int | None) -> None:
     # Start Feature computation scheduler (DOC-010 § Job Scheduling).
     # Hourly interval; max_instances=1 skips if previous job still running.
     scheduler = create_feature_scheduler(compute_fn=_compute_features)
+
+    # Intelligence scan callback (DOC-010 § Job Scheduling).
+    # Defined here in main.py (composition root, exempt from contracts).
+    async def _run_intelligence() -> None:
+        await run_intelligence_scan(engine, redis_client, settings.chain_id, _clock)
+
+    scheduler.add_job(
+        _run_intelligence,
+        "interval",
+        minutes=5,
+        id="intelligence_risk_scan",
+        name="Intelligence risk scan (GoPlus + risk rules + insights)",
+        max_instances=1,
+    )
+
     scheduler.start()
     logger.info("feature_scheduler_started", interval_seconds=3600)
+    logger.info("intelligence_scheduler_started", interval_seconds=300)
 
     try:
         if effective_start is not None:
