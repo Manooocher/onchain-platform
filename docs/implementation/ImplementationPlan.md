@@ -147,7 +147,7 @@ Nothing here is a design decision — everything below was already decided in DO
 
 **What gets built:** `analytics/outcome_engine.py` (or wherever the team ultimately resolved the DOC-006 "Analytics Engine" vs. `intelligence/` ownership note — this was left as an explicitly open, non-blocking naming question in DOC-011's last revision; resolve it here, don't let it block the milestone).
 
-**Definition of done:** the first cohort of pairs old enough to evaluate (per DOC-012's `observation_window`) gets a real, versioned `label_definition` applied — this is what Phase 4 (ML Foundation, DOC-005) will eventually train against, so getting the definition right now is worth the small delay.
+**Definition of done:** the first cohort of pairs old enough to evaluate (per DOC-012's `observation_window`) gets a real, versioned `label_definition` applied — this is what Phase 4 (ML Foundation, DOC-005) will eventually train against, so getting the definition right now is worth the small delay. ✅ Verified: `Outcome` schema (DOC-012 § B.4) with `observation_window`, `label_definition`, `label_definition_version`, and `label_value`; `outcomes` PostgreSQL table with `(entity_id, outcome_type, evaluation_timestamp DESC)` index; deterministic `evaluation_timestamp` = creation + window; RUG_PULL/SUCCESSFUL_LAUNCH/DEAD_TOKEN rules versioned `1.0`; idempotent `ON CONFLICT DO NOTHING` upsert; honeypot read from persisted `insights` (analytics never imports intelligence); "Finality Before Analytics" — only pairs whose PAIR_CREATED fact is FINALIZED are evaluated; hourly APScheduler job via callback; replay test proves byte-identical Outcomes across two passes. All gates green (197 unit/integration/schema + 7 replay).
 
 ---
 
