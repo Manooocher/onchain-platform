@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engin
 
 from onchain_platform.acquisition.collector import CollectedLog, Collector, LogFilter
 from onchain_platform.acquisition.providers.local_node import LocalNodeProvider
-from onchain_platform.analytics import feature_engine, projection_engine
+from onchain_platform.analytics import feature_engine, outcome_job, projection_engine
 from onchain_platform.domain.exceptions import DomainValidationError, PlatformError
 from onchain_platform.domain.ids import pair_canonical_id
 from onchain_platform.domain.schemas.enums import FactType
@@ -223,9 +223,25 @@ async def _run_live(settings: Settings, start_block: int | None) -> None:
         max_instances=1,
     )
 
+    # Outcome evaluation callback (DOC-010 § Job Scheduling, Milestone 8).
+    # Defined here in main.py (composition root, exempt from contracts) so
+    # platform/scheduler.py never imports analytics/ directly.
+    async def _evaluate_outcomes() -> None:
+        await outcome_job.run_outcome_evaluation(engine, _clock)
+
+    scheduler.add_job(
+        _evaluate_outcomes,
+        "interval",
+        hours=1,
+        id="outcome_evaluation",
+        name="Outcome evaluation (RUG_PULL / SUCCESSFUL_LAUNCH / DEAD_TOKEN)",
+        max_instances=1,
+    )
+
     scheduler.start()
     logger.info("feature_scheduler_started", interval_seconds=3600)
     logger.info("intelligence_scheduler_started", interval_seconds=300)
+    logger.info("outcome_scheduler_started", interval_seconds=3600)
 
     try:
         if effective_start is not None:

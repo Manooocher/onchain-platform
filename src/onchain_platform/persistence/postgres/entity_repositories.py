@@ -24,6 +24,8 @@ from onchain_platform.domain.entities.token import Token
 from onchain_platform.domain.entities.trading_pair import TradingPair
 from onchain_platform.domain.entities.wallet import Wallet
 from onchain_platform.domain.exceptions import PersistenceError
+from onchain_platform.domain.schemas.enums import ConfirmationStatus
+from onchain_platform.persistence.postgres.facts import BlockchainFactRow
 from onchain_platform.persistence.postgres.models import (
     LiquidityPoolRow,
     MetadataRow,
@@ -143,6 +145,43 @@ async def list_pairs_for_token(session: AsyncSession, token_canonical_id: str) -
         rows = (await session.execute(stmt)).scalars().all()
     except SQLAlchemyError as exc:
         raise PersistenceError(f"failed to list pairs for token {token_canonical_id}") from exc
+    return [
+        TradingPair(
+            canonical_id=r.canonical_id,
+            chain_id=r.chain_id,
+            dex=r.dex,
+            base_token_id=r.base_token_id,
+            quote_token_id=r.quote_token_id,
+            pool_address=r.pool_address,
+            creation_block=r.creation_block,
+            creation_fact_id=r.creation_fact_id,
+        )
+        for r in rows
+    ]
+
+
+async def list_all_trading_pairs(session: AsyncSession) -> list[TradingPair]:
+    """All trading pairs whose creating PAIR_CREATED fact is FINALIZED.
+
+    "Finality Before Analytics" (ADR-006): an outcome must never be
+    evaluated for a pair whose creation fact is still PENDING/CONFIRMED or
+    has been ORPHANED — the pair itself is only valid once its creation is
+    finalized. Only pairs whose creation_fact_id references a FINALIZED
+    blockchain_fact row are returned.
+
+    ORDERED by creation_fact_id (block,log-order via event_time) for
+    determinism (DOC-013 § Determinism Discipline).
+    """
+    stmt = (
+        select(TradingPairRow)
+        .join(BlockchainFactRow, TradingPairRow.creation_fact_id == BlockchainFactRow.fact_id)
+        .where(BlockchainFactRow.confirmation_status == ConfirmationStatus.FINALIZED)
+        .order_by(BlockchainFactRow.event_time, TradingPairRow.canonical_id)
+    )
+    try:
+        rows = (await session.execute(stmt)).scalars().all()
+    except SQLAlchemyError as exc:
+        raise PersistenceError("failed to list all trading pairs") from exc
     return [
         TradingPair(
             canonical_id=r.canonical_id,
