@@ -137,7 +137,7 @@ Nothing here is a design decision — everything below was already decided in DO
 
 **What gets built:** `intelligence/risk_rules.py`. Build vs. buy was already decided in this project's very first review round: consume a commodity risk API (GoPlus or equivalent) as one input feature rather than re-deriving honeypot/ownership heuristics from raw bytecode. This is the milestone where that decision stops being a recommendation and becomes an actual API key and an actual HTTP client with an actual timeout (DOC-013 § Async Conventions).
 
-**Definition of done:** a newly discovered pair gets a risk read within the same latency budget as its first Feature computation — this is a research tool, not a batch report.
+**Definition of done:** a newly discovered pair gets a risk read within the same latency budget as its first Feature computation — this is a research tool, not a batch report. ✅ Verified: GoPlus client with rate limiting + caching, deterministic risk rules engine, insight generator with importance levels, filter layer selecting active pairs, APScheduler integration. All gates green.
 
 ---
 
