@@ -10,7 +10,7 @@ a downstream pipeline.
 from datetime import UTC, datetime
 from typing import Any, cast
 
-from sqlalchemy import DateTime, Enum, Index, Text, select
+from sqlalchemy import CheckConstraint, DateTime, Enum, Index, Text, select
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import CursorResult
@@ -19,8 +19,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from onchain_platform.domain.exceptions import PersistenceError
-from onchain_platform.domain.schemas.enums import Importance
+from onchain_platform.domain.schemas.enums import Importance, OutcomeType
 from onchain_platform.domain.schemas.insight import Insight
+from onchain_platform.domain.schemas.outcome import Outcome
 
 
 class InsightBase(DeclarativeBase):
@@ -141,3 +142,147 @@ async def get_latest_insight(
             f"failed to read latest Insight {insight_type} for {entity_id}"
         ) from exc
     return _row_to_insight(row) if row is not None else None
+
+
+# ---------------------------------------------------------------------------
+# Outcome (DOC-012 § B.4, DOC-014 § Storage Assignment)
+# ---------------------------------------------------------------------------
+
+
+class OutcomeBase(DeclarativeBase):
+    """Declarative base for the Outcome ORM model."""
+
+
+class OutcomeRow(OutcomeBase):
+    """Outcome table (DOC-012 § B.4, DOC-014 § Storage Assignment).
+
+    Regular PostgreSQL table, not a hypertable (DOC-014 § Storage
+    Assignment: "Outcome, Insight (§ B.4) → PostgreSQL → outcomes,
+    insights — regular tables, not hypertables").
+
+    Outcomes are ground-truth labels; a row is immutable once written
+    (DOC-013 § Immutability). The idempotent upsert is ON CONFLICT DO
+    NOTHING — re-evaluation never overwrites a historical label.
+    """
+
+    __tablename__ = "outcomes"
+
+    outcome_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    schema_version: Mapped[str] = mapped_column(Text, nullable=False, server_default="1.0")
+    entity_id: Mapped[str] = mapped_column(Text, nullable=False)
+    outcome_type: Mapped[OutcomeType] = mapped_column(
+        Enum(OutcomeType, name="outcome_type_enum", native_enum=True),
+        nullable=False,
+    )
+    observation_window: Mapped[str] = mapped_column(Text, nullable=False)
+    label_definition: Mapped[str] = mapped_column(Text, nullable=False)
+    label_definition_version: Mapped[str] = mapped_column(Text, nullable=False)
+    evaluation_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    label_value: Mapped[bool] = mapped_column(nullable=False)
+
+    __table_args__ = (
+        # DOC-014 § Data Integrity Constraints: label_value IS NOT NULL on a
+        # finalized Outcome row.
+        CheckConstraint("label_value IS NOT NULL", name="ck_outcome_label_value_not_null"),
+        # DOC-014 § Indexing Strategy: research querying "what happened to
+        # this entity" without needing every historical outcome scanned.
+        Index(
+            "ix_outcomes_entity_type_time",
+            "entity_id",
+            "outcome_type",
+            "evaluation_timestamp",
+            postgresql_using="btree",
+        ),
+    )
+
+
+def _outcome_to_row_values(outcome: Outcome) -> dict[str, object]:
+    return {
+        "outcome_id": outcome.outcome_id,
+        "schema_version": outcome.schema_version,
+        "entity_id": outcome.entity_id,
+        "outcome_type": outcome.outcome_type,
+        "observation_window": outcome.observation_window,
+        "label_definition": outcome.label_definition,
+        "label_definition_version": outcome.label_definition_version,
+        "evaluation_timestamp": outcome.evaluation_timestamp,
+        "evaluated_at": outcome.evaluated_at,
+        "label_value": outcome.label_value,
+    }
+
+
+def _row_to_outcome(row: OutcomeRow) -> Outcome:
+    return Outcome(
+        outcome_id=row.outcome_id,
+        entity_id=row.entity_id,
+        outcome_type=row.outcome_type,
+        observation_window=row.observation_window,
+        label_definition=row.label_definition,
+        label_definition_version=row.label_definition_version,
+        evaluation_timestamp=_ensure_utc(row.evaluation_timestamp),
+        evaluated_at=_ensure_utc(row.evaluated_at),
+        label_value=row.label_value,
+    )
+
+
+async def save_outcome(session: AsyncSession, outcome: Outcome) -> bool:
+    """Upsert an Outcome. Returns True if a new row was inserted, False if a
+    row with this outcome_id already existed (idempotent).
+
+    ON CONFLICT DO NOTHING (DOC-008/ADR-006 Idempotency) — re-evaluation
+    never overwrites a historical label; outcome_id is the deterministic
+    natural key (entity_id|outcome_type|evaluation_timestamp).
+    """
+    stmt = (
+        pg_insert(OutcomeRow)
+        .values(**_outcome_to_row_values(outcome))
+        .on_conflict_do_nothing(index_elements=["outcome_id"])
+    )
+    try:
+        result = cast("CursorResult[Any]", await session.execute(stmt))
+        await session.commit()
+    except SQLAlchemyError as exc:
+        raise PersistenceError(f"failed to save Outcome {outcome.outcome_id}") from exc
+    return bool(result.rowcount == 1)
+
+
+async def list_outcomes_for_entity(
+    session: AsyncSession, entity_id: str, outcome_type: OutcomeType | None = None
+) -> list[Outcome]:
+    """List Outcomes for an entity, ordered by evaluation_timestamp DESC.
+
+    DOC-014 § Indexing Strategy: the (entity_id, outcome_type,
+    evaluation_timestamp) index serves "what happened to this entity".
+    """
+    stmt = select(OutcomeRow).where(OutcomeRow.entity_id == entity_id)
+    if outcome_type is not None:
+        stmt = stmt.where(OutcomeRow.outcome_type == outcome_type)
+    stmt = stmt.order_by(OutcomeRow.evaluation_timestamp.desc())
+    try:
+        rows = (await session.execute(stmt)).scalars().all()
+    except SQLAlchemyError as exc:
+        raise PersistenceError(f"failed to list Outcomes for {entity_id}") from exc
+    return [_row_to_outcome(row) for row in rows]
+
+
+async def get_latest_outcome(
+    session: AsyncSession, entity_id: str, outcome_type: OutcomeType
+) -> Outcome | None:
+    """Most recent Outcome of a given type for an entity."""
+    stmt = (
+        select(OutcomeRow)
+        .where(
+            OutcomeRow.entity_id == entity_id,
+            OutcomeRow.outcome_type == outcome_type,
+        )
+        .order_by(OutcomeRow.evaluation_timestamp.desc())
+        .limit(1)
+    )
+    try:
+        row = (await session.execute(stmt)).scalar_one_or_none()
+    except SQLAlchemyError as exc:
+        raise PersistenceError(
+            f"failed to read latest Outcome {outcome_type} for {entity_id}"
+        ) from exc
+    return _row_to_outcome(row) if row is not None else None

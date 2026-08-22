@@ -66,3 +66,14 @@ def clean_entities(pg_engine: AsyncEngine) -> Callable[[], Awaitable[None]]:
             )
 
     return _clean
+
+
+@pytest.fixture
+def clean_outcomes(pg_engine: AsyncEngine) -> Callable[[], Awaitable[None]]:
+    """Truncate outcomes + insights for test isolation (Milestone 8)."""
+
+    async def _clean() -> None:
+        async with pg_engine.begin() as conn:
+            await conn.execute(text("TRUNCATE outcomes, insights CASCADE"))
+
+    return _clean
