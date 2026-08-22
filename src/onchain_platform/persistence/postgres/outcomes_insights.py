@@ -286,3 +286,82 @@ async def get_latest_outcome(
             f"failed to read latest Outcome {outcome_type} for {entity_id}"
         ) from exc
     return _row_to_outcome(row) if row is not None else None
+
+
+async def list_outcomes_page(
+    session: AsyncSession,
+    entity_id: str,
+    *,
+    outcome_type: OutcomeType | None = None,
+    cursor: dict[str, object] | None = None,
+    limit: int = 100,
+) -> tuple[list[Outcome], dict[str, object] | None]:
+    """Paged Outcomes for an entity, cursor on evaluation_timestamp DESC.
+
+    Serves `GET /v1/entities/{id}/outcomes` (DOC-015). Keyset pagination over
+    `evaluation_timestamp` (descending — newest first). Returns
+    (items, next_cursor_keys).
+    """
+    stmt = select(OutcomeRow).where(OutcomeRow.entity_id == entity_id)
+    if outcome_type is not None:
+        stmt = stmt.where(OutcomeRow.outcome_type == outcome_type)
+    if cursor is not None:
+        last_ts = datetime.fromisoformat(str(cursor["evaluation_timestamp"]))
+        stmt = stmt.where(OutcomeRow.evaluation_timestamp < last_ts)
+    stmt = stmt.order_by(OutcomeRow.evaluation_timestamp.desc()).limit(limit + 1)
+    try:
+        rows = (await session.execute(stmt)).scalars().all()
+    except SQLAlchemyError as exc:
+        raise PersistenceError(f"failed to list Outcomes for {entity_id}") from exc
+
+    has_more = len(rows) > limit
+    page = rows[:limit]
+    next_cursor = cast(
+        "dict[str, object] | None",
+        (
+            {"evaluation_timestamp": page[-1].evaluation_timestamp.isoformat()}
+            if has_more and page
+            else None
+        ),
+    )
+    return [_row_to_outcome(r) for r in page], next_cursor
+
+
+async def list_insights_page(
+    session: AsyncSession,
+    entity_id: str,
+    *,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    insight_type: str | None = None,
+    cursor: dict[str, object] | None = None,
+    limit: int = 100,
+) -> tuple[list[Insight], dict[str, object] | None]:
+    """Paged Insights for an entity, cursor on generated_at DESC.
+
+    Serves `GET /v1/entities/{id}/insights` (DOC-015). Returns
+    (items, next_cursor_keys).
+    """
+    stmt = select(InsightRow).where(InsightRow.entity_id == entity_id)
+    if start is not None:
+        stmt = stmt.where(InsightRow.generated_at >= start)
+    if end is not None:
+        stmt = stmt.where(InsightRow.generated_at <= end)
+    if insight_type is not None:
+        stmt = stmt.where(InsightRow.insight_type == insight_type)
+    if cursor is not None:
+        last_ts = datetime.fromisoformat(str(cursor["generated_at"]))
+        stmt = stmt.where(InsightRow.generated_at < last_ts)
+    stmt = stmt.order_by(InsightRow.generated_at.desc()).limit(limit + 1)
+    try:
+        rows = (await session.execute(stmt)).scalars().all()
+    except SQLAlchemyError as exc:
+        raise PersistenceError(f"failed to list Insights for {entity_id}") from exc
+
+    has_more = len(rows) > limit
+    page = rows[:limit]
+    next_cursor = cast(
+        "dict[str, object] | None",
+        ({"generated_at": page[-1].generated_at.isoformat()} if has_more and page else None),
+    )
+    return [_row_to_insight(r) for r in page], next_cursor

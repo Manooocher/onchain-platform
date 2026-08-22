@@ -9,6 +9,7 @@ Upserts use ON CONFLICT on canonical_id (the natural key) — idempotent
 replay guaranteed (ADR-006 § Idempotency).
 """
 
+from datetime import datetime
 from typing import Any, cast
 
 from sqlalchemy import func, select, text
@@ -197,6 +198,70 @@ async def list_all_trading_pairs(session: AsyncSession) -> list[TradingPair]:
     ]
 
 
+async def list_pairs(
+    session: AsyncSession,
+    *,
+    chain_id: int | None = None,
+    dex: str | None = None,
+    created_after: datetime | None = None,
+    cursor: dict[str, object] | None = None,
+    limit: int = 100,
+) -> tuple[list[TradingPair], dict[str, object] | None]:
+    """List trading pairs with filters + keyset pagination.
+
+    Serves `GET /v1/pairs` (DOC-015). Ordered by canonical_id (a stable,
+    unique total order) with a keyset cursor `{"canonical_id": ...}` so
+    pagination is stable regardless of rows appended mid-pagination
+    (DOC-015 § Response Shape — never offset).
+
+    `created_after` filters on the event_time of the pair's creating
+    PAIR_CREATED fact (trading_pairs has no creation timestamp column — the
+    fact is the authoritative source of birth time). Returns
+    `(items, next_cursor_keys)`; the caller encodes next_cursor_keys.
+    """
+    stmt = select(TradingPairRow)
+    if chain_id is not None:
+        stmt = stmt.where(TradingPairRow.chain_id == chain_id)
+    if dex is not None:
+        stmt = stmt.where(TradingPairRow.dex == dex)
+    if created_after is not None:
+        # Join to the creating fact to filter by its event_time (the true
+        # creation time). Only pairs with a resolvable creation fact are
+        # returned under this filter.
+        stmt = stmt.join(
+            BlockchainFactRow, TradingPairRow.creation_fact_id == BlockchainFactRow.fact_id
+        ).where(BlockchainFactRow.event_time >= created_after)
+    if cursor is not None:
+        last_id = cursor["canonical_id"]
+        stmt = stmt.where(TradingPairRow.canonical_id > last_id)
+
+    stmt = stmt.order_by(TradingPairRow.canonical_id).limit(limit + 1)
+    try:
+        rows = (await session.execute(stmt)).scalars().all()
+    except SQLAlchemyError as exc:
+        raise PersistenceError("failed to list trading pairs") from exc
+
+    has_more = len(rows) > limit
+    page = rows[:limit]
+    next_cursor = cast(
+        "dict[str, object] | None",
+        ({"canonical_id": page[-1].canonical_id} if has_more and page else None),
+    )
+    return [
+        TradingPair(
+            canonical_id=r.canonical_id,
+            chain_id=r.chain_id,
+            dex=r.dex,
+            base_token_id=r.base_token_id,
+            quote_token_id=r.quote_token_id,
+            pool_address=r.pool_address,
+            creation_block=r.creation_block,
+            creation_fact_id=r.creation_fact_id,
+        )
+        for r in page
+    ], next_cursor
+
+
 # --- LiquidityPool ---
 
 
@@ -217,6 +282,22 @@ async def save_liquidity_pool(session: AsyncSession, pool: LiquidityPool) -> boo
     except SQLAlchemyError as exc:
         raise PersistenceError(f"failed to save LiquidityPool {pool.canonical_id}") from exc
     return bool(result.rowcount == 1)
+
+
+async def get_liquidity_pool(session: AsyncSession, canonical_id: str) -> LiquidityPool | None:
+    """Read one LiquidityPool by its canonical ID (DOC-015 /pairs/{id} nesting)."""
+    stmt = select(LiquidityPoolRow).where(LiquidityPoolRow.canonical_id == canonical_id)
+    try:
+        row = (await session.execute(stmt)).scalar_one_or_none()
+    except SQLAlchemyError as exc:
+        raise PersistenceError(f"failed to read LiquidityPool {canonical_id}") from exc
+    if row is None:
+        return None
+    return LiquidityPool(
+        canonical_id=row.canonical_id,
+        protocol=row.protocol,
+        fee_tier_bps=row.fee_tier_bps,
+    )
 
 
 # --- Wallet ---
@@ -295,6 +376,25 @@ async def save_smart_contract(session: AsyncSession, contract: SmartContract) ->
     return bool(result.rowcount == 1)
 
 
+async def get_smart_contract(session: AsyncSession, canonical_id: str) -> SmartContract | None:
+    """Read one SmartContract by its canonical ID (DOC-015 /tokens/{id} nesting)."""
+    stmt = select(SmartContractRow).where(SmartContractRow.canonical_id == canonical_id)
+    try:
+        row = (await session.execute(stmt)).scalar_one_or_none()
+    except SQLAlchemyError as exc:
+        raise PersistenceError(f"failed to read SmartContract {canonical_id}") from exc
+    if row is None:
+        return None
+    return SmartContract(
+        canonical_id=row.canonical_id,
+        chain_id=row.chain_id,
+        address=row.address,
+        contract_type=row.contract_type,
+        is_verified=row.is_verified,
+        deployment_block=row.deployment_block,
+    )
+
+
 # --- Metadata ---
 
 
@@ -329,3 +429,24 @@ async def save_metadata(session: AsyncSession, metadata: Metadata) -> bool:
     except SQLAlchemyError as exc:
         raise PersistenceError(f"failed to save Metadata {metadata.entity_id}") from exc
     return bool(result.rowcount == 1)
+
+
+async def get_metadata(session: AsyncSession, entity_id: str) -> Metadata | None:
+    """Read Metadata for an entity by its canonical ID (DOC-015 /pairs/{id}
+    and /tokens/{id} nesting)."""
+    stmt = select(MetadataRow).where(MetadataRow.entity_id == entity_id)
+    try:
+        row = (await session.execute(stmt)).scalar_one_or_none()
+    except SQLAlchemyError as exc:
+        raise PersistenceError(f"failed to read Metadata {entity_id}") from exc
+    if row is None:
+        return None
+    return Metadata(
+        entity_id=row.entity_id,
+        website=row.website,
+        social_links=row.social_links,
+        logo_url=row.logo_url,
+        description=row.description,
+        verification_status=row.verification_status,
+        last_updated=row.last_updated,
+    )

@@ -25,6 +25,7 @@ from sqlalchemy import (
     Integer,
     Numeric,
     Text,
+    distinct,
     select,
 )
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -535,3 +536,159 @@ async def list_features(
     except SQLAlchemyError as exc:
         raise PersistenceError(f"failed to list Features for {entity_id}") from exc
     return [_row_to_feature(row) for row in rows]
+
+
+# ---------------------------------------------------------------------------
+# Paged reads for the Research API (DOC-015 cursor pagination)
+# ---------------------------------------------------------------------------
+
+
+async def list_bars_page(
+    session: AsyncSession,
+    pair_id: str,
+    interval: BarInterval,
+    *,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    include_provisional: bool = False,
+    cursor: dict[str, object] | None = None,
+    limit: int = 100,
+) -> tuple[list[MarketBar], dict[str, object] | None]:
+    """Paged Market Bars for a pair, keyset on bar_start_time ASC.
+
+    Serves `GET /v1/pairs/{id}/bars` (DOC-015). `include_provisional`
+    defaults to false — provisional bars are never for research datasets
+    (DOC-012 § B.3). Returns (items, next_cursor_keys).
+    """
+    stmt = select(MarketBarRow).where(
+        MarketBarRow.pair_id == pair_id,
+        MarketBarRow.interval == interval,
+    )
+    if start is not None:
+        stmt = stmt.where(MarketBarRow.bar_start_time >= start)
+    if end is not None:
+        stmt = stmt.where(MarketBarRow.bar_start_time <= end)
+    if not include_provisional:
+        stmt = stmt.where(MarketBarRow.is_provisional.is_(False))
+    if cursor is not None:
+        last_ts = datetime.fromisoformat(str(cursor["bar_start_time"]))
+        stmt = stmt.where(MarketBarRow.bar_start_time > last_ts)
+
+    stmt = stmt.order_by(MarketBarRow.bar_start_time.asc()).limit(limit + 1)
+    try:
+        rows = (await session.execute(stmt)).scalars().all()
+    except SQLAlchemyError as exc:
+        raise PersistenceError(f"failed to list MarketBars for {pair_id}") from exc
+
+    has_more = len(rows) > limit
+    page = rows[:limit]
+    next_cursor = cast(
+        "dict[str, object] | None",
+        ({"bar_start_time": page[-1].bar_start_time.isoformat()} if has_more and page else None),
+    )
+    return [_row_to_bar(r) for r in page], next_cursor
+
+
+async def list_snapshots_page(
+    session: AsyncSession,
+    entity_id: str,
+    *,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    cursor: dict[str, object] | None = None,
+    limit: int = 100,
+) -> tuple[list[ObservationSnapshot], dict[str, object] | None]:
+    """Paged Observation Snapshots, keyset on snapshot_timestamp ASC.
+
+    Serves `GET /v1/entities/{id}/snapshots` (DOC-015). Returns
+    (items, next_cursor_keys).
+    """
+    stmt = select(ObservationSnapshotRow).where(ObservationSnapshotRow.entity_id == entity_id)
+    if start is not None:
+        stmt = stmt.where(ObservationSnapshotRow.snapshot_timestamp >= start)
+    if end is not None:
+        stmt = stmt.where(ObservationSnapshotRow.snapshot_timestamp <= end)
+    if cursor is not None:
+        last_ts = datetime.fromisoformat(str(cursor["snapshot_timestamp"]))
+        stmt = stmt.where(ObservationSnapshotRow.snapshot_timestamp > last_ts)
+
+    stmt = stmt.order_by(ObservationSnapshotRow.snapshot_timestamp.asc()).limit(limit + 1)
+    try:
+        rows = (await session.execute(stmt)).scalars().all()
+    except SQLAlchemyError as exc:
+        raise PersistenceError(f"failed to list ObservationSnapshots for {entity_id}") from exc
+
+    has_more = len(rows) > limit
+    page = rows[:limit]
+    next_cursor = cast(
+        "dict[str, object] | None",
+        (
+            {"snapshot_timestamp": page[-1].snapshot_timestamp.isoformat()}
+            if has_more and page
+            else None
+        ),
+    )
+    return [_row_to_snapshot(r) for r in page], next_cursor
+
+
+async def list_features_range(
+    session: AsyncSession,
+    entity_id: str,
+    *,
+    feature_names: list[str] | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
+) -> list[Feature]:
+    """Features for an entity over a time range (dataset assembly).
+
+    Serves the `features` slice of `GET /v1/pairs/{id}/dataset` (DOC-015).
+    Deterministic order by (feature_name, as_of_timestamp) (DOC-013). This
+    is a range query, not a paged collection — DOC-015 exposes no cursor
+    for features; the dataset endpoint bounds the range instead.
+    """
+    stmt = select(FeatureRow).where(FeatureRow.entity_id == entity_id)
+    if feature_names is not None:
+        stmt = stmt.where(FeatureRow.feature_name.in_(feature_names))
+    if start is not None:
+        stmt = stmt.where(FeatureRow.as_of_timestamp >= start)
+    if end is not None:
+        stmt = stmt.where(FeatureRow.as_of_timestamp <= end)
+    stmt = stmt.order_by(FeatureRow.feature_name, FeatureRow.as_of_timestamp)
+    try:
+        rows = (await session.execute(stmt)).scalars().all()
+    except SQLAlchemyError as exc:
+        raise PersistenceError(f"failed to list Features for {entity_id}") from exc
+    return [_row_to_feature(r) for r in rows]
+
+
+async def list_feature_names(session: AsyncSession, entity_id: str) -> list[str]:
+    """Distinct feature_names for an entity (used by dataset endpoints)."""
+    stmt = (
+        select(distinct(FeatureRow.feature_name))
+        .where(FeatureRow.entity_id == entity_id)
+        .order_by(FeatureRow.feature_name)
+    )
+    try:
+        rows = (await session.execute(stmt)).scalars().all()
+    except SQLAlchemyError as exc:
+        raise PersistenceError(f"failed to list feature names for {entity_id}") from exc
+    return list(rows)
+
+
+async def list_latest_features(
+    session: AsyncSession, entity_id: str, as_of: datetime
+) -> list[Feature]:
+    """Latest-per-name Features for an entity as of `as_of`.
+
+    Serves `GET /v1/entities/{id}/features?as_of=...` (DOC-015 § PIT
+    multi-feature form). One index seek per distinct feature_name, not one
+    total — DOC-015 documents this as a heavier query than the single-name
+    form. Deterministic order by feature_name (DOC-013).
+    """
+    names = await list_feature_names(session, entity_id)
+    latest: list[Feature] = []
+    for name in names:
+        feat = await get_feature_at(session, entity_id, name, as_of)
+        if feat is not None:
+            latest.append(feat)
+    return latest

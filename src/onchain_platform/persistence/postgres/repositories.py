@@ -14,7 +14,7 @@ SQLAlchemyError must never propagate out of persistence/.
 from datetime import UTC, datetime
 from typing import Any, cast
 
-from sqlalchemy import case, func, select, update
+from sqlalchemy import case, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import SQLAlchemyError
@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from onchain_platform.domain.exceptions import PersistenceError
 from onchain_platform.domain.schemas.blockchain_fact import BlockchainFact
 from onchain_platform.domain.schemas.checkpoint import Checkpoint
-from onchain_platform.domain.schemas.enums import ConfirmationStatus
+from onchain_platform.domain.schemas.enums import ConfirmationStatus, FactType
 from onchain_platform.persistence.postgres.facts import BlockchainFactRow, CheckpointRow
 
 
@@ -147,6 +147,111 @@ async def count_facts_for_chain(session: AsyncSession, chain_id: int) -> int:
         return int((await session.execute(stmt)).scalar_one())
     except SQLAlchemyError as exc:
         raise PersistenceError(f"failed to count facts for chain {chain_id}") from exc
+
+
+async def list_facts_for_pair(
+    session: AsyncSession,
+    chain_id: int,
+    pool_address: str,
+    *,
+    fact_type: FactType | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    include_unfinalized: bool = False,
+    cursor: dict[str, object] | None = None,
+    limit: int = 100,
+) -> tuple[list[BlockchainFact], dict[str, object] | None]:
+    """List facts referencing a pair, filtered by payload JSONB.
+
+    Serves `GET /v1/pairs/{id}/facts` (DOC-015). `blockchain_facts` has no
+    `pair_id` column; the pair's pool/pair address lives in the payload
+    JSONB (`pool_address` for SWAP/LIQ, `pair_address` for PAIR_CREATED), so
+    we filter on either key (Q1).
+
+    Cursor on `fact_id` (the natural, ordered key); `include_unfinalized`
+    defaults to false → only FINALIZED facts. Returns (items, next_cursor).
+    """
+    stmt = select(BlockchainFactRow).where(
+        BlockchainFactRow.chain_id == chain_id,
+        or_(
+            BlockchainFactRow.payload["pool_address"].astext == pool_address,
+            BlockchainFactRow.payload["pair_address"].astext == pool_address,
+        ),
+    )
+    if fact_type is not None:
+        stmt = stmt.where(BlockchainFactRow.fact_type == fact_type)
+    if start is not None:
+        stmt = stmt.where(BlockchainFactRow.event_time >= start)
+    if end is not None:
+        stmt = stmt.where(BlockchainFactRow.event_time <= end)
+    if include_unfinalized:
+        # include non-finalized rows: everything except ORPHANED.
+        stmt = stmt.where(BlockchainFactRow.confirmation_status != ConfirmationStatus.ORPHANED)
+    else:
+        stmt = stmt.where(BlockchainFactRow.confirmation_status == ConfirmationStatus.FINALIZED)
+    if cursor is not None:
+        stmt = stmt.where(BlockchainFactRow.fact_id > cursor["fact_id"])
+
+    stmt = stmt.order_by(BlockchainFactRow.fact_id).limit(limit + 1)
+    try:
+        rows = (await session.execute(stmt)).scalars().all()
+    except SQLAlchemyError as exc:
+        raise PersistenceError(
+            f"failed to list facts for pair {pool_address} on chain {chain_id}"
+        ) from exc
+
+    has_more = len(rows) > limit
+    page = rows[:limit]
+    next_cursor = cast(
+        "dict[str, object] | None",
+        ({"fact_id": page[-1].fact_id} if has_more and page else None),
+    )
+    return [_row_to_fact(r) for r in page], next_cursor
+
+
+async def list_facts_for_wallet(
+    session: AsyncSession,
+    chain_id: int,
+    wallet_address: str,
+    *,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    cursor: dict[str, object] | None = None,
+    limit: int = 100,
+) -> tuple[list[BlockchainFact], dict[str, object] | None]:
+    """List facts where a wallet was involved.
+
+    Serves `GET /v1/wallets/{id}/activity` (DOC-015). Uses the GIN index
+    `ix_blockchain_facts_involved_wallets` on the stored `involved_wallets`
+    column (DOC-014). Only FINALIZED facts are surfaced. Cursor on fact_id.
+    """
+    stmt = select(BlockchainFactRow).where(
+        BlockchainFactRow.chain_id == chain_id,
+        BlockchainFactRow.involved_wallets.contains([wallet_address]),
+        BlockchainFactRow.confirmation_status == ConfirmationStatus.FINALIZED,
+    )
+    if start is not None:
+        stmt = stmt.where(BlockchainFactRow.event_time >= start)
+    if end is not None:
+        stmt = stmt.where(BlockchainFactRow.event_time <= end)
+    if cursor is not None:
+        stmt = stmt.where(BlockchainFactRow.fact_id > cursor["fact_id"])
+
+    stmt = stmt.order_by(BlockchainFactRow.fact_id).limit(limit + 1)
+    try:
+        rows = (await session.execute(stmt)).scalars().all()
+    except SQLAlchemyError as exc:
+        raise PersistenceError(
+            f"failed to list facts for wallet {wallet_address} on chain {chain_id}"
+        ) from exc
+
+    has_more = len(rows) > limit
+    page = rows[:limit]
+    next_cursor = cast(
+        "dict[str, object] | None",
+        ({"fact_id": page[-1].fact_id} if has_more and page else None),
+    )
+    return [_row_to_fact(r) for r in page], next_cursor
 
 
 # ---------------------------------------------------------------------------
