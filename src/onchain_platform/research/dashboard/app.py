@@ -7,7 +7,12 @@ through research/dashboard/api_client.py (HTTPX), never persistence/.
 import streamlit as st
 
 from onchain_platform.research.dashboard.api_client import OnchainPlatformClient
-from onchain_platform.research.dashboard.pages import dataset_explorer, pair_detail, pairs_list
+from onchain_platform.research.dashboard.pages import (
+    dataset_explorer,
+    pair_detail,
+    pairs_list,
+    top_candidates,
+)
 
 st.set_page_config(page_title="onchain_platform Research", layout="wide")
 
@@ -43,13 +48,15 @@ st.markdown(
     "bars + features, and explore assembled research datasets."
 )
 
-# Sidebar navigation to the three pages (each reads only via the API client).
+# Sidebar navigation to the pages (each reads only via the API client).
 page = st.sidebar.radio(
     "Navigate",
-    ["Pairs List", "Pair Detail", "Dataset Explorer"],
+    ["Top Candidates", "Pairs List", "Pair Detail", "Dataset Explorer"],
 )
 
-if page == "Pairs List":
+if page == "Top Candidates":
+    top_candidates.render(client)
+elif page == "Pairs List":
     pairs_list.render(client)
 elif page == "Pair Detail":
     pair_detail.render(client)

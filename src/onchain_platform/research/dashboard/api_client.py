@@ -112,5 +112,21 @@ class OnchainPlatformClient:
         resp.raise_for_status()
         return dict(resp.json())
 
+    def get_rankings(
+        self,
+        chain_id: int | None = None,
+        dex: str | None = None,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        """GET /v1/strategy/rankings"""
+        params: dict[str, Any] = {"limit": limit}
+        if chain_id:
+            params["chain_id"] = chain_id
+        if dex:
+            params["dex"] = dex
+        resp = self.client.get(self._url("/strategy/rankings"), params=params)
+        resp.raise_for_status()
+        return dict(resp.json())
+
     def close(self) -> None:
         self.client.close()
