@@ -61,8 +61,16 @@ def create_app() -> FastAPI:
 
     app.include_router(health_router, prefix=V1_PREFIX)
 
-    # Resource routers are mounted in later phases; each is attached once
-    # here and only here, keeping the factory the sole composition point.
+    # Resource routers (DOC-015 Endpoint Catalog) — mounted once, only here.
+    from onchain_platform.research.api.routes.pairs import router as pairs_router
+    from onchain_platform.research.api.routes.tokens import router as tokens_router
+    from onchain_platform.research.api.routes.wallets import router as wallets_router
+
+    app.include_router(pairs_router, prefix=V1_PREFIX)
+    app.include_router(tokens_router, prefix=V1_PREFIX)
+    app.include_router(wallets_router, prefix=V1_PREFIX)
+    # Remaining resource routers (facts/bars/snapshots/insights/outcomes/
+    # features/dataset) are added in later phases, each mounted here once.
 
     # Serve the generated OpenAPI at the versioned path (DOC-015 § OpenAPI).
     @app.get(f"{V1_PREFIX}/openapi.json", include_in_schema=False, name="openapi")
