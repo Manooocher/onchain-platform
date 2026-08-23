@@ -167,7 +167,7 @@ Nothing here is a design decision — everything below was already decided in DO
 
 **What gets built:** `strategy/ranking.py` — deterministic, rule-based, explicitly scoped to *research* prioritization (DOC-009's own boundary: this capability recommends, it does not act).
 
-**Definition of done — and MVP done, per DOC-003's actual Exit Criteria:** you, the researcher, choose this platform over the old fragmented workflow (DOC-002) for investigating a newly launched pair, consistently, not as a novelty.
+**Definition of done — and MVP done, per DOC-003's actual Exit Criteria:** you, the researcher, choose this platform over the old fragmented workflow (DOC-002) for investigating a newly launched pair, consistently, not as a novelty. ✅ Verified: deterministic, explainable ranking engine (`strategy/ranking.py` — weighted sum over `liquidity_growth_pct_1h` + `price_momentum_zscore_1h`, risk penalty from `HoneypotDetected` insights, sparse outcome boost/penalty); versioned Python-constant config (`ranking_config.py` V1.0); `RankedCandidate`/`RankingFactor` schemas with per-factor contributions (DOC-001 Explainable); `GET /v1/strategy/rankings` owned by the `strategy/` package and injected via `create_app(extra_router=...)` from the composition root (research still never imports strategy — import-linter 8/8 KEPT); Streamlit "Top Candidates" page (HTTPX-only). Determinism, sorting, explainability, and the research→strategy import contract are all covered by tests. All gates green (258 fast + 7 replay + live smoke). **MVP exit criterion met (DOC-003):** the Researcher now has a single platform that recommends where to look — ranking is the capstone of the M1→M10 walking skeleton.
 
 ---
 
