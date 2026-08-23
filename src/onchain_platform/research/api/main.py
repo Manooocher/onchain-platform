@@ -9,7 +9,7 @@ cross-cutting persistence/transport/platform — never acquisition,
 processing, domain_management, or strategy. This file stays wiring-only.
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import APIRouter, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -23,8 +23,15 @@ from onchain_platform.research.api.errors import (
 V1_PREFIX = "/v1"
 
 
-def create_app() -> FastAPI:
-    """Construct the Research Platform FastAPI application."""
+def create_app(extra_router: APIRouter | None = None) -> FastAPI:
+    """Construct the Research Platform FastAPI application.
+
+    `extra_router` lets the composition root (`main.py`, exempt from
+    import-linter) inject routers owned by other Capabilities — e.g. the
+    Strategy router from `strategy/api.py` — without research/ importing
+    strategy/ (DOC-011). Optional and backward compatible: existing callers
+    pass nothing.
+    """
     app = FastAPI(
         title="onchain_platform Research API",
         version="1.0",
@@ -89,8 +96,12 @@ def create_app() -> FastAPI:
     app.include_router(pairs_router, prefix=V1_PREFIX)
     app.include_router(tokens_router, prefix=V1_PREFIX)
     app.include_router(wallets_router, prefix=V1_PREFIX)
-    # Remaining resource routers (features/dataset) are added in later
-    # phases, each mounted here once.
+
+    # Optional Capability-owned router injected by the composition root
+    # (main.py), e.g. the Strategy router. research/ never imports strategy/
+    # directly (DOC-011), so the wiring happens here in create_app instead.
+    if extra_router is not None:
+        app.include_router(extra_router, prefix=V1_PREFIX)
 
     # Serve the generated OpenAPI at the versioned path (DOC-015 § OpenAPI).
     @app.get(f"{V1_PREFIX}/openapi.json", include_in_schema=False, name="openapi")

@@ -178,8 +178,10 @@ select = [
 "migrations/**" = ["E501"]
 # FastAPI's dependency-injection idiom is `= Depends(...)` in an argument
 # default (DOC-015). B008 flags it; it is the correct pattern here, so the
-# rule is scoped out for the research API only.
+# rule is scoped out for the research API and the strategy router (which
+# builds FastAPI routes too).
 "src/onchain_platform/research/**" = ["B008"]
+"src/onchain_platform/strategy/**" = ["B008"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
