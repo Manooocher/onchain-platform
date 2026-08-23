@@ -15,6 +15,10 @@ from onchain_platform.domain.entities.smart_contract import SmartContract
 from onchain_platform.domain.entities.token import Token
 from onchain_platform.domain.entities.trading_pair import TradingPair
 from onchain_platform.domain.entities.wallet import Wallet
+from onchain_platform.domain.schemas.enums import BarInterval
+from onchain_platform.domain.schemas.feature import Feature
+from onchain_platform.domain.schemas.market_bar import MarketBar
+from onchain_platform.domain.schemas.outcome import Outcome
 
 T = TypeVar("T")
 
@@ -62,3 +66,26 @@ class WalletDetail(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     wallet: Wallet
+
+
+# ---------------------------------------------------------------------------
+# Dataset assembly responses (DOC-015 § The Research Dataset Assembly).
+# Bars are time-series at a granularity → {"interval", "items"}. Features and
+# outcomes are pure arrays (vertical, never pivoted / never a single object).
+# ---------------------------------------------------------------------------
+
+
+class DatasetBars(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    interval: BarInterval
+    items: list[MarketBar]
+
+
+class DatasetResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    pair: TradingPair
+    bars: DatasetBars
+    features: list[Feature]
+    outcomes: list[Outcome]

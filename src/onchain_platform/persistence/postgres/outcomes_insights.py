@@ -266,6 +266,31 @@ async def list_outcomes_for_entity(
     return [_row_to_outcome(row) for row in rows]
 
 
+async def list_outcomes_range(
+    session: AsyncSession,
+    entity_id: str,
+    *,
+    start: datetime | None = None,
+    end: datetime | None = None,
+) -> list[Outcome]:
+    """Outcomes for an entity within a time range (dataset assembly).
+
+    Filters on evaluation_timestamp within [start, end], ordered ascending
+    (DOC-015 § The Research Dataset Assembly — range bounded, not paged).
+    """
+    stmt = select(OutcomeRow).where(OutcomeRow.entity_id == entity_id)
+    if start is not None:
+        stmt = stmt.where(OutcomeRow.evaluation_timestamp >= start)
+    if end is not None:
+        stmt = stmt.where(OutcomeRow.evaluation_timestamp <= end)
+    stmt = stmt.order_by(OutcomeRow.evaluation_timestamp.asc())
+    try:
+        rows = (await session.execute(stmt)).scalars().all()
+    except SQLAlchemyError as exc:
+        raise PersistenceError(f"failed to list Outcomes for {entity_id} in range") from exc
+    return [_row_to_outcome(row) for row in rows]
+
+
 async def get_latest_outcome(
     session: AsyncSession, entity_id: str, outcome_type: OutcomeType
 ) -> Outcome | None:
