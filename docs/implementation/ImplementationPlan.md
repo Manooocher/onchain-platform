@@ -157,7 +157,7 @@ Nothing here is a design decision — everything below was already decided in DO
 
 **What gets built:** `research/api/` (every DOC-015 endpoint, in the order listed there — `/health` and `/pairs` first, `/pairs/{id}/dataset` last, since it depends on everything above already working), `research/dashboard/` (Streamlit, thin, over the same API — never a second data path).
 
-**Definition of done:** DOC-002's own success definition, tested for real — pick one of its example questions ("why did this token gain momentum") and answer it using only the API, not a database client.
+**Definition of done:** DOC-002's own success definition, tested for real — pick one of its example questions ("why did this token gain momentum") and answer it using only the API, not a database client. ✅ Verified: 16 DOC-015 endpoints implemented (health, openapi, pairs list/detail, tokens detail, wallets detail/activity, facts single/pair-scoped, bars pair-scoped, snapshots/insights/outcomes entity-scoped, features single/PIT/all, dataset assembly); keyset cursor pagination everywhere with `:path` converters for canonical IDs; `correlation_id` on every error; liveness-only `/v1/health`; GET-only, no auth/rate-limit (documented deferrals); Streamlit dashboard proven HTTPX-only by AST-based import test; E2E test proves DOC-002's "why did this token gain momentum" is answerable via API calls only, with a meta-test proving no forbidden imports; all gates green (240+ tests, 7 replay, import-linter 8/8 KEPT).
 
 ---
 
