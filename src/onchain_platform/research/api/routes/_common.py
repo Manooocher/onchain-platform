@@ -1,5 +1,6 @@
 """Shared helpers for resource routers (DOC-015 pagination + errors)."""
 
+from datetime import UTC, datetime
 from typing import Any, TypeVar
 
 from fastapi import HTTPException
@@ -38,3 +39,20 @@ def build_page(  # noqa: UP047 — standard-library Generic form retained for cl
             has_more=has_more,
         ),
     )
+
+
+def parse_range(start: str | None, end: str | None) -> tuple[datetime | None, datetime | None]:
+    """Parse inclusive ISO-8601 start/end query params (422 on malformed)."""
+    start_dt = None
+    if start is not None:
+        try:
+            start_dt = datetime.fromisoformat(start.replace("Z", "+00:00")).replace(tzinfo=UTC)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="malformed start") from exc
+    end_dt = None
+    if end is not None:
+        try:
+            end_dt = datetime.fromisoformat(end.replace("Z", "+00:00")).replace(tzinfo=UTC)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="malformed end") from exc
+    return start_dt, end_dt

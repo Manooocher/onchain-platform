@@ -62,15 +62,31 @@ def create_app() -> FastAPI:
     app.include_router(health_router, prefix=V1_PREFIX)
 
     # Resource routers (DOC-015 Endpoint Catalog) — mounted once, only here.
+    # Sub-resource routers (bars/facts) are mounted BEFORE pairs so their
+    # more specific `/pairs/{id}/bars` and `/pairs/{id}/facts` paths win over
+    # pairs' greedy `{pair_id:path}` capture. Order matters — disable isort
+    # so it does not alphabetically reorder and break the precedence.
+    # isort: off
+    from onchain_platform.research.api.routes.facts import router as facts_router
+    from onchain_platform.research.api.routes.bars import router as bars_router
+    from onchain_platform.research.api.routes.snapshots import router as snapshots_router
+    from onchain_platform.research.api.routes.insights import router as insights_router
+    from onchain_platform.research.api.routes.outcomes import router as outcomes_router
     from onchain_platform.research.api.routes.pairs import router as pairs_router
     from onchain_platform.research.api.routes.tokens import router as tokens_router
     from onchain_platform.research.api.routes.wallets import router as wallets_router
+    # isort: on
 
+    app.include_router(facts_router, prefix=V1_PREFIX)
+    app.include_router(bars_router, prefix=V1_PREFIX)
+    app.include_router(snapshots_router, prefix=V1_PREFIX)
+    app.include_router(insights_router, prefix=V1_PREFIX)
+    app.include_router(outcomes_router, prefix=V1_PREFIX)
     app.include_router(pairs_router, prefix=V1_PREFIX)
     app.include_router(tokens_router, prefix=V1_PREFIX)
     app.include_router(wallets_router, prefix=V1_PREFIX)
-    # Remaining resource routers (facts/bars/snapshots/insights/outcomes/
-    # features/dataset) are added in later phases, each mounted here once.
+    # Remaining resource routers (features/dataset) are added in later
+    # phases, each mounted here once.
 
     # Serve the generated OpenAPI at the versioned path (DOC-015 § OpenAPI).
     @app.get(f"{V1_PREFIX}/openapi.json", include_in_schema=False, name="openapi")
