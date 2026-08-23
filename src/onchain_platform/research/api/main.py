@@ -72,6 +72,7 @@ def create_app() -> FastAPI:
     from onchain_platform.research.api.routes.snapshots import router as snapshots_router
     from onchain_platform.research.api.routes.insights import router as insights_router
     from onchain_platform.research.api.routes.outcomes import router as outcomes_router
+    from onchain_platform.research.api.routes.features import router as features_router
     from onchain_platform.research.api.routes.pairs import router as pairs_router
     from onchain_platform.research.api.routes.tokens import router as tokens_router
     from onchain_platform.research.api.routes.wallets import router as wallets_router
@@ -82,6 +83,7 @@ def create_app() -> FastAPI:
     app.include_router(snapshots_router, prefix=V1_PREFIX)
     app.include_router(insights_router, prefix=V1_PREFIX)
     app.include_router(outcomes_router, prefix=V1_PREFIX)
+    app.include_router(features_router, prefix=V1_PREFIX)
     app.include_router(pairs_router, prefix=V1_PREFIX)
     app.include_router(tokens_router, prefix=V1_PREFIX)
     app.include_router(wallets_router, prefix=V1_PREFIX)
