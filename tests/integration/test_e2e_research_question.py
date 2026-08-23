@@ -9,25 +9,35 @@ acquisition/ or processing/ modules. It imports only httpx, pytest, and the
 FastAPI app factory (to mount the ASGI transport).
 """
 
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
 from httpx import ASGITransport
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
+from onchain_platform.research.api.deps import get_session
 from onchain_platform.research.api.main import create_app
 
 
 @pytest.mark.asyncio
-async def test_answer_why_did_token_gain_momentum() -> None:
+async def test_answer_why_did_token_gain_momentum(pg_engine: AsyncEngine) -> None:
     """Answer DOC-002's question using only API calls (no DB client).
 
-    The real app engine is driven over ASGI; the get_session dependency reads
-    the DSN and hits actual Postgres, but no repository/model is touched in
-    this test body. If the test DB has pairs, the full research workflow runs;
-    on empty data the workflow still proves the API surface is callable.
+    The app is mounted on ASGITransport and `get_session` is overridden to
+    the test's pg_engine fixture so the test shares one engine and does not
+    depend on process-global state (robust under full-suite runs). No
+    repository/model is touched in this test body.
     """
-    transport = ASGITransport(app=create_app())
+    app = create_app()
+
+    async def _override() -> AsyncIterator[AsyncSession]:
+        async with AsyncSession(pg_engine, expire_on_commit=False) as session:
+            yield session
+
+    app.dependency_overrides[get_session] = _override
+    transport = ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         # Step 1: API is up
         health = await client.get("/v1/health")
