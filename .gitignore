@@ -1,30 +1,103 @@
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+*.whl
 
+# ---------------------------------------------------------------------------
+# Virtual environments
+# ---------------------------------------------------------------------------
 .venv/
+venv/
+ENV/
+env/
 
-.pytest_cache/
+# ---------------------------------------------------------------------------
+# IDE & Editor
+# ---------------------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
 .mypy_cache/
 .ruff_cache/
+.pytest_cache/
 
-.idea/
-.vscode/
+# ---------------------------------------------------------------------------
+# AI Coding Assistants — tools, skills, and generated plans are local
+# workflow, NOT part of the distributed codebase (they reference internal
+# agents/skills that a public release should not carry).
+# ---------------------------------------------------------------------------
+.opencode/
+.opencode.json
+.cursor/
+.cursorrules
+.aider*
+.continue/
+.claude/
+AUDIT_REPORT*.md
 
-.coverage
-htmlcov/
-
+# ---------------------------------------------------------------------------
+# Environment & secrets
+# ---------------------------------------------------------------------------
 .env
-.env.*
+.env.local
+.env.*.local
 !.env.example
 
+# ---------------------------------------------------------------------------
+# Testing & coverage
+# ---------------------------------------------------------------------------
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# ---------------------------------------------------------------------------
+# Jupyter / misc
+# ---------------------------------------------------------------------------
+.ipynb_checkpoints
+*.ipynb
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# ---------------------------------------------------------------------------
+# Logs
+# ---------------------------------------------------------------------------
+*.log
+logs/
+
+# ---------------------------------------------------------------------------
+# Databases
+# ---------------------------------------------------------------------------
+*.sqlite3
 *.db
 
-.streamlit/
-
-dist/
-build/
-
-*.egg-info/
-
-# Planning artifacts not part of the codebase (Milestone 8 audit/plan outputs)
-AUDIT_REPORT_*.md
+# ---------------------------------------------------------------------------
+# Docker overrides
+# ---------------------------------------------------------------------------
+docker-compose.override.yml
