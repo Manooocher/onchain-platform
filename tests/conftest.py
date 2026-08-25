@@ -77,3 +77,62 @@ def clean_outcomes(pg_engine: AsyncEngine) -> Callable[[], Awaitable[None]]:
             await conn.execute(text("TRUNCATE outcomes, insights CASCADE"))
 
     return _clean
+
+
+@pytest_asyncio.fixture
+async def seeded_pair(pg_engine: AsyncEngine) -> str:
+    """Deterministically seed a real TradingPair belonging to this test run.
+
+    Used by the E2E research-question test so it never depends on ambient DB
+    state (a prior test may wipe trading_pairs). Returns the pair's canonical
+    ID. The seeding lives here (conftest), NOT in the E2E module, so the
+    E2E's own AST meta-test (which forbids persistence imports in that file)
+    still passes.
+    """
+    from eth_utils.address import to_checksum_address
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from onchain_platform.domain.entities.token import Token
+    from onchain_platform.domain.entities.trading_pair import TradingPair
+    from onchain_platform.domain.ids import pair_canonical_id, token_canonical_id
+    from onchain_platform.persistence.postgres import entity_repositories as repos
+
+    chain_id = 8453
+    # A stable address derived from a fixed seed byte — deterministic across
+    # runs but unlikely to collide with other tests using 0x{bb}*20 style.
+    pool = to_checksum_address("0x" + "42" * 20)
+    tok0 = to_checksum_address("0x4200000000000000000000000000000000000006")
+    tok1 = to_checksum_address("0x" + "2b" * 20)
+    pair_id = pair_canonical_id(chain_id, pool)
+
+    async with AsyncSession(pg_engine, expire_on_commit=False) as session:
+        await repos.save_token(
+            session,
+            Token(
+                canonical_id=token_canonical_id(chain_id, tok0),
+                chain_id=chain_id,
+                contract_address=tok0,
+            ),
+        )
+        await repos.save_token(
+            session,
+            Token(
+                canonical_id=token_canonical_id(chain_id, tok1),
+                chain_id=chain_id,
+                contract_address=tok1,
+            ),
+        )
+        await repos.save_trading_pair(
+            session,
+            TradingPair(
+                canonical_id=pair_id,
+                chain_id=chain_id,
+                dex="uniswap_v2",
+                base_token_id=token_canonical_id(chain_id, tok0),
+                quote_token_id=token_canonical_id(chain_id, tok1),
+                pool_address=pool,
+                creation_block=100,
+                creation_fact_id=f"{chain_id}:0x{'a1' * 32}:0",
+            ),
+        )
+    return pair_id

@@ -22,14 +22,17 @@ from onchain_platform.research.api.main import create_app
 
 
 @pytest.mark.asyncio
-async def test_answer_why_did_token_gain_momentum(pg_engine: AsyncEngine) -> None:
+async def test_answer_why_did_token_gain_momentum(pg_engine: AsyncEngine, seeded_pair: str) -> None:
     """Answer DOC-002's question using only API calls (no DB client).
 
     The app is mounted on ASGITransport and `get_session` is overridden to
     the test's pg_engine fixture so the test shares one engine and does not
-    depend on process-global state (robust under full-suite runs). No
-    repository/model is touched in this test body.
+    depend on process-global state. `seeded_pair` (from conftest) guarantees
+    a pair exists for this run regardless of what other tests did — no
+    order-dependent skip.
     """
+    from urllib.parse import quote
+
     app = create_app()
 
     async def _override() -> AsyncIterator[AsyncSession]:
@@ -38,24 +41,23 @@ async def test_answer_why_did_token_gain_momentum(pg_engine: AsyncEngine) -> Non
 
     app.dependency_overrides[get_session] = _override
     transport = ASGITransport(app=app)
+    pair_id = seeded_pair
+    qid = quote(pair_id, safe="")
+
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         # Step 1: API is up
         health = await client.get("/v1/health")
         assert health.status_code == 200
 
-        # Step 2: Find pairs
-        pairs_resp = await client.get("/v1/pairs", params={"limit": 10})
+        # Step 2: The seeded pair is discoverable (list includes it).
+        pairs_resp = await client.get("/v1/pairs", params={"limit": 100})
         assert pairs_resp.status_code == 200
         pairs = pairs_resp.json()
         assert "items" in pairs
-
-        if not pairs["items"]:
-            pytest.skip("no pairs in test database — E2E requires seeded data")
-
-        pair_id = pairs["items"][0]["canonical_id"]
+        assert any(item["canonical_id"] == pair_id for item in pairs["items"])
 
         # Step 3: Get features for momentum analysis (PIT "all features" form).
-        features_resp = await client.get(f"/v1/entities/{pair_id}/features")
+        features_resp = await client.get(f"/v1/entities/{qid}/features")
         assert features_resp.status_code == 200
         features = features_resp.json()
         momentum_feature = None
@@ -70,25 +72,25 @@ async def test_answer_why_did_token_gain_momentum(pg_engine: AsyncEngine) -> Non
 
         # Step 4: Get market bars for price action (recent window).
         bars_resp = await client.get(
-            f"/v1/pairs/{pair_id}/bars",
+            f"/v1/pairs/{qid}/bars",
             params={"interval": "1h", "limit": 24},
         )
         assert bars_resp.status_code == 200
         assert "items" in bars_resp.json()
 
         # Step 5: Underlying facts for the pair (audit trail).
-        facts_resp = await client.get(f"/v1/pairs/{pair_id}/facts", params={"limit": 50})
+        facts_resp = await client.get(f"/v1/pairs/{qid}/facts", params={"limit": 50})
         assert facts_resp.status_code == 200
 
         # Step 6: Intelligence insights for the entity.
-        insights_resp = await client.get(f"/v1/entities/{pair_id}/insights")
+        insights_resp = await client.get(f"/v1/entities/{qid}/insights")
         assert insights_resp.status_code == 200
 
         # Step 7: Assemble research dataset (short window; arrays may be empty).
         end = datetime.now(UTC)
         start = end - timedelta(days=1)
         dataset_resp = await client.get(
-            f"/v1/pairs/{pair_id}/dataset",
+            f"/v1/pairs/{qid}/dataset",
             params={
                 "interval": "1h",
                 "start": start.isoformat(),
