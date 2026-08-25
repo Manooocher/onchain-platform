@@ -138,6 +138,26 @@ Blockchain Events → Facts → State Projections → Snapshots → Features →
    - OpenAPI spec: http://localhost:8000/v1/openapi.json
    - Dashboard: http://localhost:8501
 
+### Collector CLI
+
+The ingestion process accepts a `--chain` flag and an optional block range. With
+multi-provider API keys set in `.env`, it builds a failover pool (Alchemy primary,
+QuickNode secondary, RockX/W3Node tertiary); without keys it falls back to the
+public RPC endpoint.
+
+```bash
+# Collect from Base chain (default)
+uv run python -m onchain_platform.main
+
+# Collect from a specific chain (provider pool from config/providers.yaml)
+uv run python -m onchain_platform.main --chain base
+uv run python -m onchain_platform.main --chain ethereum
+uv run python -m onchain_platform.main --chain bnb
+
+# Process a specific block and exit
+uv run python -m onchain_platform.main --chain base --start-block 50000000
+```
+
 ---
 
 ## Project Structure

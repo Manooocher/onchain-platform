@@ -25,9 +25,14 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 
 from onchain_platform.acquisition.collector import CollectedLog, Collector, LogFilter
+from onchain_platform.acquisition.providers.base import BlockchainProvider
 from onchain_platform.acquisition.providers.local_node import LocalNodeProvider
 from onchain_platform.analytics import feature_engine, outcome_job, projection_engine
-from onchain_platform.domain.exceptions import DomainValidationError, PlatformError
+from onchain_platform.domain.exceptions import (
+    AcquisitionError,
+    DomainValidationError,
+    PlatformError,
+)
 from onchain_platform.domain.ids import pair_canonical_id
 from onchain_platform.domain.schemas.enums import FactType
 from onchain_platform.domain_management import entity_resolution
@@ -35,7 +40,7 @@ from onchain_platform.intelligence.intelligence_job import run_intelligence_scan
 from onchain_platform.persistence.postgres import entity_repositories as entity_repos
 from onchain_platform.persistence.postgres import repositories
 from onchain_platform.persistence.timescale import repositories as ts_repos
-from onchain_platform.platform.config import Settings
+from onchain_platform.platform.config import Settings, get_chain_id
 from onchain_platform.platform.logging import configure_logging
 from onchain_platform.platform.scheduler import create_feature_scheduler
 from onchain_platform.processing.fact_processor import FactProcessor
@@ -59,14 +64,38 @@ def _clock() -> datetime:
     return datetime.now(UTC)
 
 
-async def _run_live(settings: Settings, start_block: int | None) -> None:
+def _build_provider(settings: Settings, chain: str) -> BlockchainProvider:
+    """Build the provider for the selected chain.
+
+    When multi-provider config/env keys are present, builds a failover pool
+    via create_multi_provider(chain). Otherwise (developer/smoke mode with no
+    provider keys) falls back to the plain LocalNodeProvider from RPC_URL, so
+    `uv run python -m onchain_platform.main` keeps working out of the box.
+    """
+    try:
+        from onchain_platform.acquisition.providers import create_multi_provider
+
+        provider = create_multi_provider(chain)
+        settings.chain_id = get_chain_id(chain)
+        logger.info("provider_pool_configured", chain=chain)
+        return provider
+    except AcquisitionError as exc:
+        logger.warning(
+            "provider_pool_unavailable_falling_back_to_local_node",
+            chain=chain,
+            error=str(exc),
+        )
+        return LocalNodeProvider(settings.rpc_url)
+
+
+async def _run_live(settings: Settings, start_block: int | None, chain: str) -> None:
     """Live ingestion loop: provider → collector → processor → Postgres.
 
     Milestone 2: wires the FinalityEngine for confirmation lifecycle
     advancement and reorg detection (ADR-006 § Finality Engine).
     """
     engine: AsyncEngine = create_async_engine(settings.postgres_dsn)
-    provider = LocalNodeProvider(settings.rpc_url)
+    provider = _build_provider(settings, chain)
     processor = FactProcessor(chain_id=settings.chain_id, clock=_clock)
 
     # Load confirmation depths (ADR-006 § Configurable Confirmation Depth).
@@ -265,6 +294,12 @@ def main() -> None:
         description="On-chain quant research platform — Milestone 2 with finality engine.",
     )
     parser.add_argument(
+        "--chain",
+        choices=["base", "ethereum", "bnb"],
+        default="base",
+        help="Blockchain to collect from (default: base)",
+    )
+    parser.add_argument(
         "--start-block",
         type=int,
         default=None,
@@ -274,7 +309,7 @@ def main() -> None:
     args = parser.parse_args()
 
     try:
-        asyncio.run(_run_live(settings, args.start_block))
+        asyncio.run(_run_live(settings, args.start_block, args.chain))
     except (PlatformError, DomainValidationError) as exc:
         # PlatformErrors are the sanctioned boundary shape (DOC-013 §
         # Exception Hierarchy) — log and exit nonzero; a raw traceback here

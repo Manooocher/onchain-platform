@@ -51,3 +51,22 @@ class Settings(BaseSettings):
         raw = yaml.safe_load(self.confirmation_depth_path.read_text())
         # YAML keys are strings; convert to int chain_ids.
         return {int(k): int(v) for k, v in raw["confirmation_depth"].items()}
+
+
+# CLI --chain value → EIP-155 chain id (Phase D multi-provider integration).
+CHAIN_ID_MAP = {
+    "base": 8453,
+    "ethereum": 1,
+    "bnb": 56,
+}
+
+
+def get_chain_id(chain: str) -> int:
+    """Map a --chain CLI value to its EIP-155 chain id.
+
+    Raises ValueError for an unknown chain name (CLI validation).
+    """
+    try:
+        return CHAIN_ID_MAP[chain]
+    except KeyError as exc:
+        raise ValueError(f"unknown chain {chain!r}; expected one of {list(CHAIN_ID_MAP)}") from exc
