@@ -126,9 +126,7 @@ class HttpJsonRpcProvider(BlockchainProvider):
                 if attempt < len(_BACKOFF_SECONDS):
                     await asyncio.sleep(_BACKOFF_SECONDS[attempt])
                     continue
-                raise AcquisitionError(
-                    f"RPC transport failure calling {method}: {exc}"
-                ) from exc
+                raise AcquisitionError(f"RPC transport failure calling {method}: {exc}") from exc
 
             if "error" in body:
                 error = cast("dict[str, Any]", body["error"])
