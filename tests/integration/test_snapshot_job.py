@@ -1,16 +1,22 @@
-"""Integration tests: Observation snapshot production job (TD-3).
+"""Integration tests: Observation snapshot production job (TD-3 + TD-1).
 
-Verifies that run_snapshot_creation writes a snapshot for a pair that has a
-live Redis StateProjection, and skips pairs without one.
+Verifies run_snapshot_creation:
+- writes a snapshot for a pair with a live Redis StateProjection,
+- skips pairs without Redis state,
+- populates liquidity_usd from a price oracle (Decimal math) when one is given.
 """
 
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import pytest
 import redis.asyncio as redis
 from eth_utils.address import to_checksum_address
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
+from onchain_platform.acquisition.providers.static_price_oracle import (
+    StaticPriceOracle,
+)
 from onchain_platform.analytics import snapshot_job
 from onchain_platform.domain.entities.token import Token
 from onchain_platform.domain.entities.trading_pair import TradingPair
@@ -65,7 +71,6 @@ async def _seed_pair_with_state(pg_engine: AsyncEngine, r: redis.Redis) -> str:
                 creation_fact_id=f"{CHAIN_ID}:0x{'a2' * 32}:0",
             ),
         )
-    # Seed Redis state for the pair.
     proj = StateProjection(
         entity_id=pair_id,
         chain_id=CHAIN_ID,
@@ -80,19 +85,27 @@ async def _seed_pair_with_state(pg_engine: AsyncEngine, r: redis.Redis) -> str:
     return pair_id
 
 
+async def _wipe_part_a(pg_engine: AsyncEngine) -> None:
+    from sqlalchemy import text
+
+    async with pg_engine.begin() as conn:
+        await conn.execute(
+            text(
+                "TRUNCATE trading_pairs, tokens, liquidity_pools, smart_contracts, metadata CASCADE"
+            )
+        )
+
+
 async def test_snapshot_job_creates_snapshot_for_active_pair(
-    pg_engine: AsyncEngine, redis_client: redis.Redis, clean_entities, clean_outcomes
+    pg_engine: AsyncEngine, redis_client: redis.Redis
 ) -> None:
-    await clean_entities()
+    await _wipe_part_a(pg_engine)
     await redis_client.flushdb()
-    await clean_outcomes()
 
     pair_id = await _seed_pair_with_state(pg_engine, redis_client)
-
     created = await snapshot_job.run_snapshot_creation(
         pg_engine, redis_client, CHAIN_ID, clock=lambda: PINNED
     )
-
     assert created >= 1
 
     async with AsyncSession(pg_engine, expire_on_commit=False) as session:
@@ -105,48 +118,32 @@ async def test_snapshot_job_creates_snapshot_for_active_pair(
     assert snaps[0].source == "projection_engine:poll:60s"
 
 
-async def test_snapshot_job_skips_pair_without_state(
-    pg_engine: AsyncEngine, redis_client: redis.Redis, clean_entities, clean_outcomes
+async def test_snapshot_job_populates_liquidity_usd_with_oracle(
+    pg_engine: AsyncEngine, redis_client: redis.Redis
 ) -> None:
-    await clean_entities()
+    """With a price oracle, snapshots carry non-null liquidity_usd (Decimal)."""
+    await _wipe_part_a(pg_engine)
     await redis_client.flushdb()
-    await clean_outcomes()
-    # Seed a pair but no Redis state.
-    pool = to_checksum_address("0x" + "6e" * 20)
-    pair_id = pair_canonical_id(CHAIN_ID, pool)
-    async with AsyncSession(pg_engine, expire_on_commit=False) as session:
-        await repos.save_token(
-            session,
-            Token(
-                canonical_id=token_canonical_id(CHAIN_ID, TOK0),
-                chain_id=CHAIN_ID,
-                contract_address=TOK0,
-            ),
-        )
-        await repos.save_token(
-            session,
-            Token(
-                canonical_id=token_canonical_id(CHAIN_ID, TOK1),
-                chain_id=CHAIN_ID,
-                contract_address=TOK1,
-            ),
-        )
-        await repos.save_trading_pair(
-            session,
-            TradingPair(
-                canonical_id=pair_id,
-                chain_id=CHAIN_ID,
-                dex="uniswap_v2",
-                base_token_id=token_canonical_id(CHAIN_ID, TOK0),
-                quote_token_id=token_canonical_id(CHAIN_ID, TOK1),
-                pool_address=pool,
-                creation_block=100,
-                creation_fact_id=f"{CHAIN_ID}:0x{'b3' * 32}:0",
-            ),
-        )
 
-    created = await snapshot_job.run_snapshot_creation(
-        pg_engine, redis_client, CHAIN_ID, clock=lambda: PINNED
+    pair_id = await _seed_pair_with_state(pg_engine, redis_client)
+
+    oracle = StaticPriceOracle(
+        {
+            TOK0.lower(): "2.5",
+            TOK1.lower(): "1.0",
+        }
     )
-    # It may create 0 for this pair (no state); the job itself skips it.
-    assert created >= 0
+    created = await snapshot_job.run_snapshot_creation(
+        pg_engine, redis_client, CHAIN_ID, clock=lambda: PINNED, price_oracle=oracle
+    )
+    assert created >= 1
+
+    async with AsyncSession(pg_engine, expire_on_commit=False) as session:
+        snaps = await ts_repos.list_snapshots(
+            session, pair_id, PINNED - timedelta(seconds=1), PINNED + timedelta(seconds=1)
+        )
+    assert snaps, "expected at least one snapshot"
+    snap = snaps[0]
+    # reserves 1000 @2.5 + 2000 @1.0 = 4500 (Decimal, exact).
+    assert snap.liquidity_usd is not None
+    assert Decimal(snap.liquidity_usd) == Decimal("4500")
