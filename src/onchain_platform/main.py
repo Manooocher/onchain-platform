@@ -28,6 +28,7 @@ from onchain_platform.acquisition.collector import CollectedLog, Collector, LogF
 from onchain_platform.acquisition.providers.base import BlockchainProvider
 from onchain_platform.acquisition.providers.local_node import LocalNodeProvider
 from onchain_platform.analytics import feature_engine, outcome_job, projection_engine
+from onchain_platform.analytics import snapshot_job as snapshot_job_mod
 from onchain_platform.domain.exceptions import (
     AcquisitionError,
     DomainValidationError,
@@ -249,6 +250,27 @@ async def _run_live(settings: Settings, start_block: int | None, chain: str) -> 
         minutes=5,
         id="intelligence_risk_scan",
         name="Intelligence risk scan (GoPlus + risk rules + insights)",
+        max_instances=1,
+    )
+
+    # Observation snapshot creation callback (TD-3 / M5 gap). Writes a
+    # snapshot for every active pair every 5 minutes so historical state
+    # queries and feature engineering have real data.
+    async def _create_snapshots() -> None:
+        count = await snapshot_job_mod.run_snapshot_creation(
+            engine,
+            redis_client,
+            settings.chain_id,
+            _clock,
+        )
+        logger.info("snapshot_job_completed", count=count)
+
+    scheduler.add_job(
+        _create_snapshots,
+        "interval",
+        minutes=5,
+        id="snapshot_creation",
+        name="Observation snapshot creation",
         max_instances=1,
     )
 
