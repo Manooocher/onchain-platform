@@ -41,16 +41,17 @@ class Settings(BaseSettings):
     # Confirmation Depth: "The platform must not hardcode confirmation rules").
     confirmation_depth_path: Path = Path("config/confirmation_depth.yaml")
 
-    def load_confirmation_depths(self) -> dict[int, int]:
+    def load_confirmation_depths(self) -> dict[str, int]:
         """Load per-chain confirmation depths from YAML.
 
-        Returns {chain_id: depth}. ADR-006 § Configurable Confirmation
-        Depth: 'Future chains may define different thresholds without
-        changing application logic.'
+        Returns {chain_name: depth}, keyed by the same chain names used in
+        config/confirmation_depth.yaml and by the --chain CLI flag (e.g.
+        "base": 3). ADR-006 § Configurable Confirmation Depth: 'Future
+        chains may define different thresholds without changing application
+        logic.'
         """
         raw = yaml.safe_load(self.confirmation_depth_path.read_text())
-        # YAML keys are strings; convert to int chain_ids.
-        return {int(k): int(v) for k, v in raw["confirmation_depth"].items()}
+        return {str(k): int(v) for k, v in raw["confirmation_depth"].items()}
 
 
 # CLI --chain value → EIP-155 chain id (Phase D multi-provider integration).

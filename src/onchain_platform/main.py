@@ -73,11 +73,12 @@ def _build_provider(settings: Settings, chain: str) -> BlockchainProvider:
     provider keys) falls back to the plain LocalNodeProvider from RPC_URL, so
     `uv run python -m onchain_platform.main` keeps working out of the box.
     """
+    # Keep settings.chain_id consistent with the selected chain on every path.
+    settings.chain_id = get_chain_id(chain)
     try:
         from onchain_platform.acquisition.providers import create_multi_provider
 
         provider = create_multi_provider(chain)
-        settings.chain_id = get_chain_id(chain)
         logger.info("provider_pool_configured", chain=chain)
         return provider
     except AcquisitionError as exc:
@@ -101,7 +102,7 @@ async def _run_live(settings: Settings, start_block: int | None, chain: str) -> 
 
     # Load confirmation depths (ADR-006 § Configurable Confirmation Depth).
     confirmation_depths = settings.load_confirmation_depths()
-    chain_depth = confirmation_depths[settings.chain_id]
+    chain_depth = confirmation_depths[chain]
 
     # Construct the reorg handler (DOC-013 § Exception Hierarchy: reorgs
     # are Domain Events, not exceptions). LoggingReorgEventHandler logs at
@@ -125,9 +126,17 @@ async def _run_live(settings: Settings, start_block: int | None, chain: str) -> 
     # range → Replay missing blocks → Resume live streaming').
     checkpoint_block = await finality_engine.load_checkpoint()
 
-    # Determine start block: checkpoint + 1 if checkpoint exists,
-    # otherwise the explicit --start-block argument or chain head.
-    if checkpoint_block is not None:
+    # Determine start block. An explicit --start-block (replay/smoke mode)
+    # overrides the checkpoint; otherwise resume from checkpoint + 1, or fall
+    # back to the chain head for live tailing (ADR-006 § Recovery Procedure).
+    if start_block is not None:
+        effective_start = start_block
+        logger.info(
+            "replaying_from_explicit_block",
+            chain_id=settings.chain_id,
+            start_block=start_block,
+        )
+    elif checkpoint_block is not None:
         effective_start = checkpoint_block + 1
         logger.info(
             "resuming_from_checkpoint",
@@ -135,8 +144,6 @@ async def _run_live(settings: Settings, start_block: int | None, chain: str) -> 
             checkpoint_block=checkpoint_block,
             start_block=effective_start,
         )
-    elif start_block is not None:
-        effective_start = start_block
     else:
         effective_start = None  # will use chain head in run_from
 
