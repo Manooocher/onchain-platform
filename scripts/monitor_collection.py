@@ -10,6 +10,7 @@ Run:
 
 import asyncio
 import os
+import sys
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -74,5 +75,32 @@ async def monitor() -> None:
         await engine.dispose()
 
 
+async def check_providers(chain: str = "base") -> None:
+    """Ping each configured provider's eth_blockNumber (genuine reachability).
+
+    Errors (DNS/TLS/4xx) are reported per provider — this is a real check,
+    not fabricated health state. Requires provider keys set in the env.
+    """
+    from onchain_platform.acquisition.providers.factory import create_provider
+    from onchain_platform.platform.provider_config import load_provider_config
+
+    config = load_provider_config(chain)
+    print(f"\n=== Provider Reachability ({chain}) ===")
+    for spec in config.providers:
+        provider = create_provider(spec)
+        try:
+            head = await provider.get_chain_head()
+            print(f"{spec.name:8} OK  block={head}")
+        except Exception as exc:  # noqa: BLE001 — report any provider error
+            print(f"{spec.name:8} ERR {type(exc).__name__}: {str(exc)[:90]}")
+        finally:
+            await provider.close()
+
+
 if __name__ == "__main__":
-    asyncio.run(monitor())
+    # `--check-providers` optionally pings the configured RPC pool.
+    if "--check-providers" in sys.argv:
+        chain = "base"
+        asyncio.run(check_providers(chain))
+    else:
+        asyncio.run(monitor())

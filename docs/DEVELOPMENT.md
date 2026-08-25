@@ -150,6 +150,21 @@ Contracts are defined in `pyproject.toml` under `[tool.importlinter]`. **They mu
 - `research/` importing `strategy/` (strategy owns its own router; wire via `create_app(extra_router=...)`)
 - Any circular imports between capabilities
 
+## Provider Configuration
+
+RPC access uses a multi-provider failover pool (ADR-006, `config/providers.yaml`).
+Set the provider API keys in `.env` (`ALCHEMY_BASE_API_KEY`,
+`QUICKNODE_BASE_SUBDOMAIN`, `QUICKNODE_BASE_API_KEY`, `ROCKX_BASE_API_KEY`) and
+select the chain at startup:
+
+```bash
+uv run python -m onchain_platform.main --chain base
+uv run python -m onchain_platform.main --chain ethereum
+```
+
+Without keys, the collector falls back to the public RPC endpoint. See
+[PROVIDERS.md](PROVIDERS.md) for the full provider guide.
+
 ## Database Management
 
 ### Migrations
