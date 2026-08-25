@@ -1,0 +1,44 @@
+# Multi-provider RPC configuration (ADR-006 § Provider Abstraction).
+#
+# Each chain lists providers ordered by `priority` (1 = primary). The
+# MultiProvider orchestrator tries them in priority order, marking a provider
+# unhealthy after `unhealthy_threshold` consecutive failures and retrying it
+# after `recovery_interval_seconds`.
+#
+# API keys are NEVER stored here — `{api_key}` placeholders are resolved at
+# load time from the environment (e.g. .env). Values here are structure only.
+#
+# All timings/durations are configuration, not business logic (DOC-013 §
+# Determinism Discipline).
+
+base:
+  chain_id: 8453
+  primary:
+    name: alchemy
+    type: alchemy
+    url_template: "https://base-mainnet.g.alchemy.com/v2/{api_key}"
+    ws_template: "wss://base-mainnet.g.alchemy.com/v2/{api_key}"
+    api_key_env: "ALCHEMY_BASE_API_KEY"
+    rate_limit_per_second: 660
+    priority: 1
+  secondary:
+    name: quiknode
+    type: quiknode
+    url_template: "https://{subdomain}.base-mainnet.quiknode.pro/{api_key}/"
+    subdomain_env: "QUICKNODE_BASE_SUBDOMAIN"
+    api_key_env: "QUICKNODE_BASE_API_KEY"
+    rate_limit_per_second: 50
+    priority: 2
+  tertiary:
+    name: rockx
+    type: rockx_w3node
+    url_template: "https://base.w3node.com/{api_key}/api"
+    api_key_env: "ROCKX_BASE_API_KEY"
+    rate_limit_per_second: 25
+    priority: 3
+    requires_ssl_no_revoke: true
+  failover:
+    strategy: "priority_with_health_check"
+    health_check_interval_seconds: 30
+    unhealthy_threshold: 3
+    recovery_interval_seconds: 300
