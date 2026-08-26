@@ -16,18 +16,8 @@ pool's address. It lives in analytics/ and depends only on domain/ (DOC-011:
 analytics may import domain).
 """
 
-from dataclasses import dataclass
-from enum import StrEnum
-
-
-class QuoteTokenType(StrEnum):
-    """How a pool's quote (non-base) token is denominated."""
-
-    USDC = "USDC"
-    WETH = "WETH"
-    STABLECOIN = "STABLECOIN"  # USDT / DAI — stable but not USDC
-    OTHER = "OTHER"
-
+from onchain_platform.domain.interfaces.price_oracle import PoolClassification
+from onchain_platform.domain.schemas.enums import QuoteTokenType
 
 # Known base-chain token addresses (canonical lowercase form; checksummed at
 # classification time). These are well-known, permanent registry entries, not
@@ -39,24 +29,6 @@ _STABLECOIN_ADDRESSES_LC: dict[str, QuoteTokenType] = {
 }
 
 _WETH_ADDRESS = "0x4200000000000000000000000000000000000006"
-
-
-@dataclass(frozen=True)
-class PoolClassification:
-    """Classified shape of a pool relevant to liquidity_usd computation.
-
-    `quote_token_address` is the token whose price we must resolve (the
-    non-WETH/stablecoin leg when one exists, else the second token).
-    `is_stablecoin_pool` is True when the quote leg is a stablecoin
-    (USDC/USDT/DAI), in which case a USD value is directly available.
-    """
-
-    pool_address: str
-    token0: str
-    token1: str
-    quote_token_type: QuoteTokenType
-    quote_token_address: str  # the token that provides USD denomination
-    is_stablecoin_pool: bool  # True if quote is USDC/USDT/DAI
 
 
 def _to_lc(address: str) -> str:

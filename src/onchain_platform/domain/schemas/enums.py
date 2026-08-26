@@ -91,3 +91,19 @@ class OutcomeType(StrEnum):
     RUG_PULL = "RUG_PULL"
     SUCCESSFUL_LAUNCH = "SUCCESSFUL_LAUNCH"
     DEAD_TOKEN = "DEAD_TOKEN"
+
+
+class QuoteTokenType(StrEnum):
+    """How a pool's quote (USD-denomination) leg is classified.
+
+    A domain concept used by liquidity_usd computation: the quote token's type
+    determines which price formula applies (stablecoin static, WETH*ETH price,
+    or exotic → no USD value). Lives here (domain/) so it is importable by both
+    analytics pool classification and the acquisition price oracle without
+    violating DOC-011's dependency boundaries.
+    """
+
+    USDC = "USDC"
+    WETH = "WETH"
+    STABLECOIN = "STABLECOIN"  # USDT / DAI — stable but not USDC
+    OTHER = "OTHER"
