@@ -21,6 +21,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     DateTime,
+    Float,
     Index,
     Integer,
     Numeric,
@@ -253,6 +254,9 @@ class ObservationSnapshotRow(TimescaleBase):
     reserve1: Mapped[str] = mapped_column(Numeric, nullable=False)
     price: Mapped[str] = mapped_column(Numeric, nullable=False)
     liquidity_usd: Mapped[str | None] = mapped_column(Numeric, nullable=True)
+    liquidity_usd_source: Mapped[str | None] = mapped_column(Text, nullable=True)
+    liquidity_usd_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    quote_token_type: Mapped[str | None] = mapped_column(Text, nullable=True)
     holder_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     market_cap_usd: Mapped[str | None] = mapped_column(Numeric, nullable=True)
     fdv_usd: Mapped[str | None] = mapped_column(Numeric, nullable=True)
@@ -282,6 +286,9 @@ def _snapshot_to_row_values(snap: ObservationSnapshot) -> dict[str, object]:
         "reserve1": snap.reserve1,
         "price": snap.price,
         "liquidity_usd": snap.liquidity_usd,
+        "liquidity_usd_source": snap.liquidity_usd_source,
+        "liquidity_usd_confidence": snap.liquidity_usd_confidence,
+        "quote_token_type": snap.quote_token_type,
         "holder_count": snap.holder_count,
         "market_cap_usd": snap.market_cap_usd,
         "fdv_usd": snap.fdv_usd,
@@ -302,6 +309,13 @@ def _row_to_snapshot(row: ObservationSnapshotRow) -> ObservationSnapshot:
         reserve1=str(row.reserve1),
         price=str(row.price),
         liquidity_usd=str(row.liquidity_usd) if row.liquidity_usd is not None else None,
+        liquidity_usd_source=row.liquidity_usd_source,
+        liquidity_usd_confidence=(
+            float(row.liquidity_usd_confidence)
+            if row.liquidity_usd_confidence is not None
+            else None
+        ),
+        quote_token_type=row.quote_token_type,
         holder_count=row.holder_count,
         market_cap_usd=str(row.market_cap_usd) if row.market_cap_usd is not None else None,
         fdv_usd=str(row.fdv_usd) if row.fdv_usd is not None else None,

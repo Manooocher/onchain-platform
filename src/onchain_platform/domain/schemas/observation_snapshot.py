@@ -39,6 +39,11 @@ class ObservationSnapshot(BaseModel):
     price: str
     # M5: all None (require external price oracle / token transfer events).
     liquidity_usd: str | None = None
+    # Liquidity-usd provenance + reliability (TD-1 Phase 3): enables ML
+    # Foundation to weight USD-denominated features by confidence.
+    liquidity_usd_source: str | None = None  # "STATIC"|"CHAINLINK"|"DEX_RATIO"|"NULL"
+    liquidity_usd_confidence: float | None = None  # 0.0 .. 1.0
+    quote_token_type: str | None = None  # "USDC"|"WETH"|"STABLECOIN"|"OTHER"
     holder_count: int | None = None
     market_cap_usd: str | None = None
     fdv_usd: str | None = None
