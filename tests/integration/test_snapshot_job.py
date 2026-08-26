@@ -14,9 +14,6 @@ import redis.asyncio as redis
 from eth_utils.address import to_checksum_address
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from onchain_platform.acquisition.providers.static_price_oracle import (
-    StaticPriceOracle,
-)
 from onchain_platform.analytics import snapshot_job
 from onchain_platform.domain.entities.token import Token
 from onchain_platform.domain.entities.trading_pair import TradingPair
@@ -121,20 +118,72 @@ async def test_snapshot_job_creates_snapshot_for_active_pair(
 async def test_snapshot_job_populates_liquidity_usd_with_oracle(
     pg_engine: AsyncEngine, redis_client: redis.Redis
 ) -> None:
-    """With a price oracle, snapshots carry non-null liquidity_usd (Decimal)."""
+    """With a pool-classified USDC pool + oracle, snapshot carries liquidity_usd
+    and confidence fields (Decimal math, domain-aware)."""
     await _wipe_part_a(pg_engine)
     await redis_client.flushdb()
 
-    pair_id = await _seed_pair_with_state(pg_engine, redis_client)
-
-    oracle = StaticPriceOracle(
-        {
-            TOK0.lower(): "2.5",
-            TOK1.lower(): "1.0",
-        }
+    # Seed a Token/USDC pair: quote = USDC (stablecoin).
+    USDC = to_checksum_address("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913")
+    pool = to_checksum_address("0x" + "7a" * 20)
+    pair_id = pair_canonical_id(CHAIN_ID, pool)
+    async with AsyncSession(pg_engine, expire_on_commit=False) as session:
+        await repos.save_token(
+            session,
+            Token(
+                canonical_id=token_canonical_id(CHAIN_ID, TOK0),
+                chain_id=CHAIN_ID,
+                contract_address=TOK0,
+            ),
+        )
+        await repos.save_token(
+            session,
+            Token(
+                canonical_id=token_canonical_id(CHAIN_ID, USDC),
+                chain_id=CHAIN_ID,
+                contract_address=USDC,
+            ),
+        )
+        await repos.save_trading_pair(
+            session,
+            TradingPair(
+                canonical_id=pair_id,
+                chain_id=CHAIN_ID,
+                dex="uniswap_v2",
+                base_token_id=token_canonical_id(CHAIN_ID, TOK0),
+                quote_token_id=token_canonical_id(CHAIN_ID, USDC),
+                pool_address=pool,
+                creation_block=100,
+                creation_fact_id=f"{CHAIN_ID}:0x{'c4' * 32}:0",
+            ),
+        )
+    proj = StateProjection(
+        entity_id=pair_id,
+        chain_id=CHAIN_ID,
+        as_of_block=100,
+        as_of_fact_id="f1",
+        computed_at=PINNED,
+        reserve0="1000",  # base token
+        reserve1="2000",  # USDC quote
+        price="2",
     )
+    await state_cache.save_state(redis_client, proj)
+
+    # Fake oracle with get_pool_result that returns a STATIC USDC quote.
+    from onchain_platform.domain.interfaces.price_oracle import PriceResult, PriceSource
+
+    class FakeOracle:
+        async def get_pool_result(self, reserves, pool_class, as_of):
+            assert pool_class.quote_token_type.value == "USDC"
+            return PriceResult(
+                price_usd=Decimal("1.0"),
+                source=PriceSource.STATIC,
+                confidence=1.0,
+                quote_token_type=pool_class.quote_token_type,
+            )
+
     created = await snapshot_job.run_snapshot_creation(
-        pg_engine, redis_client, CHAIN_ID, clock=lambda: PINNED, price_oracle=oracle
+        pg_engine, redis_client, CHAIN_ID, clock=lambda: PINNED, oracle=FakeOracle()
     )
     assert created >= 1
 
@@ -144,6 +193,9 @@ async def test_snapshot_job_populates_liquidity_usd_with_oracle(
         )
     assert snaps, "expected at least one snapshot"
     snap = snaps[0]
-    # reserves 1000 @2.5 + 2000 @1.0 = 4500 (Decimal, exact).
+    # USDC quote reserve = 2000; symmetric pool → liquidity ≈ 2000*1.0*2 = 4000.
     assert snap.liquidity_usd is not None
-    assert Decimal(snap.liquidity_usd) == Decimal("4500")
+    assert Decimal(snap.liquidity_usd) == Decimal("4000")
+    assert snap.liquidity_usd_source == "STATIC"
+    assert snap.liquidity_usd_confidence == 1.0
+    assert snap.quote_token_type == "USDC"
