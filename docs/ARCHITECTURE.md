@@ -86,6 +86,38 @@ Plus `forbidden` contracts closing the gaps (e.g. `research/` may not import `st
 5. **Provider independence** — abstract `BlockchainProvider` interface; no vendor code in business logic.
 6. **Capability-owned routers** — `strategy/` owns its own FastAPI router; wired via `create_app(extra_router=...)` so `research/` never imports `strategy/`.
 
+## Liquidity USD Computation
+
+The platform computes `liquidity_usd` for observation snapshots using a
+domain-aware, multi-source price oracle with confidence tracking.
+
+### Pool Classification
+Pools are classified by quote token (`analytics/pool_classifier.py`):
+- **USDC pools** (~30% of Base pools): Token/USDC
+- **WETH pools** (~60% of Base pools): Token/WETH
+- **USDT/DAI**: stablecoin quote
+- **Exotic pools** (~10%): Token/Token or other → `liquidity_usd = NULL`
+
+### Price Oracle Strategy (`acquisition/providers/multi_price_oracle.py`)
+1. **STATIC** (confidence 1.0): hardcoded stablecoin prices (USDC=1.0, USDT=1.0, DAI=1.0)
+2. **CHAINLINK** (confidence 0.95): ETH/USD price from an injected feed (Chainlink or an on-chain USDC/WETH pool), cached 5 min in Redis
+3. **DEX_RATIO** (confidence 0.7-0.9): derived from a pool's reserve ratio
+4. **NULL** (confidence 0.0): exotic pools or unknown tokens
+
+### Liquidity Calculation
+- **USDC / stablecoin pool**: `liquidity_usd = reserve_quote * 2` (symmetric)
+- **WETH pool**: `liquidity_usd = reserve_weth * price_eth_usd * 2`
+- **Exotic pool**: `liquidity_usd = NULL`
+
+### Confidence Tracking
+Each snapshot includes:
+- `liquidity_usd_source`: STATIC | CHAINLINK | DEX_RATIO | NULL
+- `liquidity_usd_confidence`: 0.0 to 1.0
+- `quote_token_type`: USDC | WETH | STABLECOIN | OTHER
+
+This enables ML Foundation (Phase 4) to weight features by reliability and to
+ignore low-confidence USD values (e.g. a `confidence < 0.5` "don't trust").
+
 ## PIT Correctness
 
 `Feature.entity_id` + `feature_name` + `as_of_timestamp` (descending) is the query index. `get_feature_at(session, entity_id, feature_name, as_of)` filters `as_of_timestamp <= as_of` and returns the most recent row — the same function serves backtests and live queries, which is what makes research reproducible (DOC-013).
