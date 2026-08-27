@@ -72,7 +72,7 @@ def compute_liquidity_usd(
 
     A generic USD estimate of two legs' reserves; returns None if either
     price is unknown. The snapshot job now uses the domain-aware
-    _liquidity_usd_for_quote; this helper remains for callers that have both
+    liquidity_usd_for_quote; this helper remains for callers that have both
     leg prices directly.
     """
     if price0 is None or price1 is None:
@@ -85,7 +85,7 @@ def compute_liquidity_usd(
     return str(r0 * price0 + r1 * price1)
 
 
-def _liquidity_usd_for_quote(
+def liquidity_usd_for_quote(
     reserves: tuple[str, str],
     pool_class: PoolClassification,
     quote_result: PriceResult,
@@ -179,7 +179,7 @@ async def run_snapshot_creation(
             quote_result = await oracle.get_pool_result(
                 (state.reserve0, state.reserve1), pool_class, now
             )
-            liquidity_usd, source, confidence = _liquidity_usd_for_quote(
+            liquidity_usd, source, confidence = liquidity_usd_for_quote(
                 (state.reserve0, state.reserve1), pool_class, quote_result
             )
 

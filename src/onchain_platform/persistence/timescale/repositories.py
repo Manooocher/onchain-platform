@@ -386,6 +386,32 @@ async def list_snapshots(
     return [_row_to_snapshot(row) for row in rows]
 
 
+async def list_snapshots_missing_liquidity_usd(
+    session: AsyncSession,
+    *,
+    limit: int = 1000,
+    offset: int = 0,
+) -> list[ObservationSnapshot]:
+    """Snapshots whose liquidity_usd is NULL, paged, ascending.
+
+    Used by the liquidity_usd backfill (TD-1 Phase 5) to find snapshots that
+    still lack a USD value, so they can be recomputed and upserted with
+    provenance/confidence.
+    """
+    stmt = (
+        select(ObservationSnapshotRow)
+        .where(ObservationSnapshotRow.liquidity_usd.is_(None))
+        .order_by(ObservationSnapshotRow.snapshot_id)
+        .limit(limit)
+        .offset(offset)
+    )
+    try:
+        rows = (await session.execute(stmt)).scalars().all()
+    except SQLAlchemyError as exc:
+        raise PersistenceError("failed to list snapshots missing liquidity_usd") from exc
+    return [_row_to_snapshot(row) for row in rows]
+
+
 # ---------------------------------------------------------------------------
 # Feature (DOC-012 § B.3)
 # ---------------------------------------------------------------------------
