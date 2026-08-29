@@ -231,16 +231,17 @@ async def _run_live(settings: Settings, start_block: int | None, chain: str) -> 
                 pair = await entity_repos.get_trading_pair(session, entity_id)
                 if pair is None:
                     continue
-                feat1 = await feature_engine.compute_liquidity_growth_pct_1h(
-                    session, entity_id, settings.chain_id, now, now
-                )
-                if feat1 is not None:
-                    await ts_repos.save_feature(session, feat1)
-                feat2 = await feature_engine.compute_price_momentum_zscore_1h(
-                    session, entity_id, settings.chain_id, now, now
-                )
-                if feat2 is not None:
-                    await ts_repos.save_feature(session, feat2)
+                feature_functions = [
+                    feature_engine.compute_liquidity_growth_pct_1h,
+                    feature_engine.compute_price_momentum_zscore_1h,
+                    feature_engine.compute_volume_quote_delta_1h,
+                    feature_engine.compute_honeypot_detected_score,
+                    feature_engine.compute_liquidity_usd_delta_1h,
+                ]
+                for fn in feature_functions:
+                    feat = await fn(session, entity_id, settings.chain_id, now, now)
+                    if feat is not None:
+                        await ts_repos.save_feature(session, feat)
 
     # Start Feature computation scheduler (DOC-010 § Job Scheduling).
     # Hourly interval; max_instances=1 skips if previous job still running.

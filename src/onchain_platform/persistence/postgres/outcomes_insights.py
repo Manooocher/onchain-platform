@@ -144,6 +144,35 @@ async def get_latest_insight(
     return _row_to_insight(row) if row is not None else None
 
 
+async def get_latest_insight_as_of(
+    session: AsyncSession,
+    entity_id: str,
+    insight_type: str | None,
+    as_of: datetime,
+) -> Insight | None:
+    """Most recent Insight (optionally of a given type) with generated_at <= as_of.
+
+    Point-in-Time variant of `get_latest_insight`: filters on
+    `generated_at <= as_of` so a Feature computed with this insight respects
+    PIT correctness (DOC-008 § D: never use future data). When `insight_type`
+    is None, returns the entity's most recent Insight of any type as of as_of.
+    """
+    stmt = select(InsightRow).where(
+        InsightRow.entity_id == entity_id,
+        InsightRow.generated_at <= as_of,
+    )
+    if insight_type is not None:
+        stmt = stmt.where(InsightRow.insight_type == insight_type)
+    stmt = stmt.order_by(InsightRow.generated_at.desc()).limit(1)
+    try:
+        row = (await session.execute(stmt)).scalar_one_or_none()
+    except SQLAlchemyError as exc:
+        raise PersistenceError(
+            f"failed to read latest Insight {insight_type or 'any'} for {entity_id} as of {as_of}"
+        ) from exc
+    return _row_to_insight(row) if row is not None else None
+
+
 # ---------------------------------------------------------------------------
 # Outcome (DOC-012 § B.4, DOC-014 § Storage Assignment)
 # ---------------------------------------------------------------------------
