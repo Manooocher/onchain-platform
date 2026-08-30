@@ -342,6 +342,70 @@ async def get_latest_outcome(
     return _row_to_outcome(row) if row is not None else None
 
 
+async def get_outcome(
+    session: AsyncSession,
+    entity_id: str,
+    outcome_type: OutcomeType,
+    observation_window: str,
+) -> Outcome | None:
+    """Most recent Outcome for an entity, type, AND observation window.
+
+    Window-aware variant of `get_latest_outcome`: the one-shot guard in the
+    outcome job must distinguish labels by observation_window (a pair has an
+    independent 1h label and a 24h label — DOC-012 § B.4). Filters on
+    `observation_window`, ordered by evaluation_timestamp DESC.
+    """
+    stmt = (
+        select(OutcomeRow)
+        .where(
+            OutcomeRow.entity_id == entity_id,
+            OutcomeRow.outcome_type == outcome_type,
+            OutcomeRow.observation_window == observation_window,
+        )
+        .order_by(OutcomeRow.evaluation_timestamp.desc())
+        .limit(1)
+    )
+    try:
+        row = (await session.execute(stmt)).scalar_one_or_none()
+    except SQLAlchemyError as exc:
+        raise PersistenceError(
+            f"failed to read Outcome {outcome_type}/{observation_window} for {entity_id}"
+        ) from exc
+    return _row_to_outcome(row) if row is not None else None
+
+
+async def get_existing_outcome_keys(
+    session: AsyncSession,
+    entity_ids: list[str],
+    outcome_types: list[str],
+    observation_windows: list[str],
+) -> set[tuple[str, str, str]]:
+    """All existing (entity_id, outcome_type, observation_window) keys.
+
+    Bulk existence check for the outcome job, so it can skip already-labelled
+    (entity, type, window) triples in one query instead of one round-trip per
+    candidate. outcome_type is compared by enum value (column stores the enum
+    value as text). Returned keys use `.value` strings to match the job's
+    OutcomeType enumeration.
+    """
+    if not entity_ids:
+        return set()
+    stmt = select(
+        OutcomeRow.entity_id,
+        OutcomeRow.outcome_type,
+        OutcomeRow.observation_window,
+    ).where(
+        OutcomeRow.entity_id.in_(entity_ids),
+        OutcomeRow.outcome_type.in_(outcome_types),
+        OutcomeRow.observation_window.in_(observation_windows),
+    )
+    try:
+        rows = (await session.execute(stmt)).all()
+    except SQLAlchemyError as exc:
+        raise PersistenceError("failed to read existing outcome keys") from exc
+    return {(r.entity_id, str(r.outcome_type), r.observation_window) for r in rows}
+
+
 async def list_outcomes_page(
     session: AsyncSession,
     entity_id: str,

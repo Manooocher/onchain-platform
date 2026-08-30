@@ -24,15 +24,18 @@ from onchain_platform.domain.entities.trading_pair import TradingPair
 from onchain_platform.domain.schemas.enums import OutcomeType
 from onchain_platform.persistence.postgres import entity_repositories, repositories
 from onchain_platform.persistence.postgres.outcomes_insights import (
-    get_latest_outcome,
+    get_existing_outcome_keys,
     save_outcome,
 )
 
 logger = structlog.get_logger(__name__)
 
-# The active observation windows for the MVP (ships "1h"; "24h"/"7d" are
-# supported by the parser and can be enabled as live cohort data accrues).
-ACTIVE_OBSERVATION_WINDOWS = ("1h",)
+# The active observation windows for the MVP. "1h" ships from Milestone 8;
+# "24h" is enabled in Phase 0 Step 2 (ML Foundation prerequisite) so pairs old
+# enough to have a closed 24h window get a second, independently-scored label.
+# Each window is a separate, versioned label family (DOC-012 § B.4), evaluated
+# with its own thresholds (outcome_rules.WINDOW_THRESHOLDS).
+ACTIVE_OBSERVATION_WINDOWS = ("1h", "24h")
 
 _OUTCOME_TYPES = (
     OutcomeType.RUG_PULL,
@@ -92,10 +95,20 @@ async def run_outcome_evaluation(
 
                 evaluation_timestamp = creation_time + timedelta(seconds=window_seconds)
 
+                # One-shot, window-scoped: skip any (entity, type, window) triple
+                # already labelled for BOTH windows (DOC-012 § B.4). A pair has an
+                # independent 1h label and a 24h label — the guard must not let the
+                # 1h label make the 24h label get skipped. Bulk query per window.
+                existing_keys = await get_existing_outcome_keys(
+                    session,
+                    entity_ids=[pair.canonical_id],
+                    outcome_types=[t.value for t in _OUTCOME_TYPES],
+                    observation_windows=[window],
+                )
+
                 for outcome_type in _OUTCOME_TYPES:
-                    # One-shot: skip if already evaluated for this type.
-                    existing = await get_latest_outcome(session, pair.canonical_id, outcome_type)
-                    if existing is not None:
+                    key = (pair.canonical_id, outcome_type.value, window)
+                    if key in existing_keys:
                         pairs_rechecked += 1
                         continue
 

@@ -207,3 +207,101 @@ def test_parse_observation_window() -> None:
     assert engine_mod.parse_observation_window("1h") == 3600
     assert engine_mod.parse_observation_window("24h") == 86400
     assert engine_mod.parse_observation_window("7d") == 7 * 86400
+
+
+# ---------------------------------------------------------------------------
+# Window-aware thresholds (Phase 0 Step 2)
+# ---------------------------------------------------------------------------
+
+
+def test_get_thresholds_1h_matches_legacy_constants() -> None:
+    """1h thresholds equal the original V1 values — behaviour unchanged."""
+    from onchain_platform.analytics.outcome_rules import get_thresholds
+
+    th = get_thresholds("1h")
+    assert th.liquidity_drop_threshold == Decimal("0.90")  # 90% flash crash
+    assert th.success_min_trades == 30
+    assert th.success_liquidity_retention == Decimal("0.70")
+    assert th.dead_token_swap_threshold == 0
+
+
+def test_get_thresholds_24h_more_lenient() -> None:
+    """24h thresholds are more lenient for a slow bleed over a day."""
+    from onchain_platform.analytics.outcome_rules import get_thresholds
+
+    th = get_thresholds("24h")
+    assert th.liquidity_drop_threshold == Decimal("0.70")  # 70% line in 24h
+    assert th.success_min_trades == 30
+    assert th.success_liquidity_retention == Decimal("0.50")
+    assert th.dead_token_swap_threshold == 5
+
+
+def test_get_thresholds_unknown_window_raises() -> None:
+    from onchain_platform.analytics.outcome_rules import get_thresholds
+
+    with pytest.raises(ValueError, match="Unknown observation window"):
+        get_thresholds("unknown")
+
+
+def test_rug_pull_threshold_differs_by_window() -> None:
+    """An 80% liquidity drop is NOT a 1h rug pull (needs >90%) but IS a 24h
+    rug pull (threshold 70%). Uses the same underlying snapshots/bars."""
+    early = _make_snap(PINNED, "100", "100")  # product 10000
+    late = _make_snap(PINNED, "45", "45")  # product 2025 → drop 79.75%
+    bars = [_bar(PINNED, 1)]
+    snapshots = [early, late]
+
+    assert outcome_rules.evaluate_rug_pull(snapshots, bars, observation_window="1h") is False
+    assert outcome_rules.evaluate_rug_pull(snapshots, bars, observation_window="24h") is True
+
+
+def test_rug_pull_1h_unaffected_by_default() -> None:
+    """Default observation_window is 1h → original behaviour preserved."""
+    early = _make_snap(PINNED, "100", "100")
+    late = _make_snap(PINNED, "10", "10")  # drop 99% > 90%
+    assert outcome_rules.evaluate_rug_pull([early, late], [_bar(PINNED, 1)]) is True
+
+
+def test_successful_launch_retention_differs_by_window() -> None:
+    """60% peak retention is NOT a 1h successful launch (needs >=70%) but IS a
+    24h one (retention threshold 50%)."""
+    bars = [_bar(PINNED, 50)]  # 50 >= 30 trades
+
+    # For 1h: late 7800 / 10000 = 78% >= 70% → True. Need a case under 70%.
+    snapshots_low = [
+        _make_snap(PINNED, "100", "100"),
+        _make_snap(PINNED, "60", "100"),  # late 6000 = 60%
+    ]
+    assert (
+        outcome_rules.evaluate_successful_launch(snapshots_low, bars, observation_window="1h")
+        is False
+    )
+    assert (
+        outcome_rules.evaluate_successful_launch(snapshots_low, bars, observation_window="24h")
+        is True
+    )
+
+
+def test_dead_token_swap_threshold_differs_by_window() -> None:
+    """3 trades in the window: DEAD under 1h (threshold 0) is False, but True
+    under 24h (threshold 5)."""
+    bars_3 = [_bar(PINNED, 3)]
+    snapshots = [_make_snap(PINNED, "100", "100"), _make_snap(PINNED, "100", "100")]
+    assert outcome_rules.evaluate_dead_token(snapshots, bars_3, observation_window="1h") is False
+    assert outcome_rules.evaluate_dead_token(snapshots, bars_3, observation_window="24h") is True
+
+
+def test_dispatch_with_explicit_window() -> None:
+    """evaluate_for_type passes the window through to the rule."""
+    early = _make_snap(PINNED, "100", "100")
+    late = _make_snap(PINNED, "45", "45")  # ~80% drop
+    snapshots = [early, late]
+    bars = [_bar(PINNED, 1)]
+    assert outcome_rules.evaluate_for_type("RUG_PULL", snapshots, bars, False, "1h") is False
+    assert outcome_rules.evaluate_for_type("RUG_PULL", snapshots, bars, False, "24h") is True
+
+
+def test_label_definition_reflects_window_threshold() -> None:
+    """label_definition_for is window-aware so the 24h label states 70%."""
+    assert "90%" in outcome_rules.label_definition_for("RUG_PULL", "1h")
+    assert "70%" in outcome_rules.label_definition_for("RUG_PULL", "24h")

@@ -111,13 +111,15 @@ async def evaluate_outcome(
         return None
 
     is_honeypot = await _is_honeypot(session, entity_id)
-    label_value = outcome_rules.evaluate_for_type(outcome_type.value, snapshots, bars, is_honeypot)
+    label_value = outcome_rules.evaluate_for_type(
+        outcome_type.value, snapshots, bars, is_honeypot, observation_window
+    )
 
     outcome = Outcome.create(
         entity_id=entity_id,
         outcome_type=outcome_type,
         observation_window=observation_window,
-        label_definition=outcome_rules.label_definition_for(outcome_type.value),
+        label_definition=outcome_rules.label_definition_for(outcome_type.value, observation_window),
         label_definition_version=outcome_rules.OUTCOME_RULES_VERSION,
         evaluation_timestamp=evaluation_timestamp,
         evaluated_at=clock(),

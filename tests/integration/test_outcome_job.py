@@ -16,7 +16,7 @@ from eth_utils.address import to_checksum_address
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from onchain_platform.analytics import outcome_job
+from onchain_platform.analytics import outcome_job, outcome_rules
 from onchain_platform.domain.entities.token import Token
 from onchain_platform.domain.entities.trading_pair import TradingPair
 from onchain_platform.domain.ids import pair_canonical_id, token_canonical_id
@@ -282,3 +282,251 @@ async def test_job_skips_pair_with_unfinalized_creation(
     p1, c1, r1 = await outcome_job.run_outcome_evaluation(pg_engine, clock=lambda: NOW)
     assert c1 == 0  # creation fact not FINALIZED → pair not returned
     assert r1 == 0
+
+
+# ---------------------------------------------------------------------------
+# 24h observation window (Phase 0 Step 2)
+# ---------------------------------------------------------------------------
+
+
+async def test_job_creates_6_outcomes_for_24h_eligible_pair(
+    pg_engine: AsyncEngine,
+    clean_entities: _CleanFn,
+    clean_facts: _CleanFn,
+) -> None:
+    """A pair old enough for BOTH windows gets 3 types × 2 windows = 6 labels,
+    each carrying the correct observation_window and window-specific thresholds."""
+    await _clear_timescale(pg_engine)
+    # Created 25h before the pinned clock → both 1h and 24h windows are closed.
+    created_25h = NOW - timedelta(hours=25)
+    entity_id = await _seed_pair(
+        pg_engine,
+        fact_id=f"{CHAIN_ID}:0x{'dd' * 32}:0",
+        status=ConfirmationStatus.FINALIZED,
+        event_time=created_25h,
+        clean_entities_fn=clean_entities,
+        clean_facts_fn=clean_facts,
+    )
+    # 25h of snapshot + bar data (healthy pair).
+    async with AsyncSession(pg_engine, expire_on_commit=False) as session:
+        for ts, r0, r1 in [
+            (created_25h, "100", "100"),
+            (created_25h + timedelta(minutes=30), "100", "100"),
+            (NOW - timedelta(hours=2), "100", "100"),
+            (NOW - timedelta(minutes=30), "100", "100"),
+        ]:
+            await ts_repos.save_snapshot(
+                session,
+                ObservationSnapshot.create(
+                    entity_id=entity_id,
+                    chain_id=CHAIN_ID,
+                    snapshot_timestamp=ts,
+                    observed_at=ts,
+                    ingested_at=ts,
+                    source="test",
+                    reserve0=r0,
+                    reserve1=r1,
+                    price="1",
+                ),
+            )
+        for i in range(4):
+            await ts_repos.save_bar(
+                session,
+                MarketBar.create(
+                    pair_id=entity_id,
+                    chain_id=CHAIN_ID,
+                    interval=BarInterval.ONE_MINUTE,
+                    bar_start_time=created_25h + timedelta(hours=3, minutes=i),
+                    open_="1",
+                    high="1",
+                    low="1",
+                    close="1",
+                    volume_base="0",
+                    volume_quote="0",
+                    trade_count=5,
+                    vwap="1",
+                    buy_volume="0",
+                    sell_volume="0",
+                    source_fact_range=("f1", "f1"),
+                    computed_at=created_25h,
+                ),
+            )
+
+    p1, c1, r1 = await outcome_job.run_outcome_evaluation(pg_engine, clock=lambda: NOW)
+
+    from onchain_platform.persistence.postgres.outcomes_insights import list_outcomes_for_entity
+
+    async with AsyncSession(pg_engine, expire_on_commit=False) as session:
+        rows = await list_outcomes_for_entity(session, entity_id)
+    assert len(rows) == 6  # 3 types × 2 windows
+
+    windows = {r.observation_window for r in rows}
+    assert windows == {"1h", "24h"}
+    types = {r.outcome_type for r in rows}
+    assert types == {OutcomeType.RUG_PULL, OutcomeType.SUCCESSFUL_LAUNCH, OutcomeType.DEAD_TOKEN}
+
+    # Each (type, window) exactly once — the window-aware guard may not skip.
+    keys = {(r.outcome_type, r.observation_window) for r in rows}
+    assert len(keys) == 6
+
+    # Idempotent: a second run creates nothing and rechecks all six.
+    p2, c2, r2 = await outcome_job.run_outcome_evaluation(pg_engine, clock=lambda: NOW)
+    assert c2 == 0
+    assert r2 == 6
+
+
+async def test_window_aware_guard_evaluates_24h_even_when_1h_label_exists(
+    pg_engine: AsyncEngine,
+    clean_entities: _CleanFn,
+    clean_facts: _CleanFn,
+) -> None:
+    """An existing 1h RUG_PULL label must NOT suppress the 24h label. This is
+    the critical correctness fix: the one-shot guard keys on
+    (entity, type, observation_window), not (entity, type)."""
+    await _clear_timescale(pg_engine)
+    created_25h = NOW - timedelta(hours=25)
+    entity_id = await _seed_pair(
+        pg_engine,
+        fact_id=f"{CHAIN_ID}:0x{'ee' * 32}:0",
+        status=ConfirmationStatus.FINALIZED,
+        event_time=created_25h,
+        clean_entities_fn=clean_entities,
+        clean_facts_fn=clean_facts,
+    )
+    async with AsyncSession(pg_engine, expire_on_commit=False) as session:
+        for ts, r0, r1 in [
+            (created_25h, "100", "100"),
+            (NOW - timedelta(minutes=30), "100", "100"),
+        ]:
+            await ts_repos.save_snapshot(
+                session,
+                ObservationSnapshot.create(
+                    entity_id=entity_id,
+                    chain_id=CHAIN_ID,
+                    snapshot_timestamp=ts,
+                    observed_at=ts,
+                    ingested_at=ts,
+                    source="test",
+                    reserve0=r0,
+                    reserve1=r1,
+                    price="1",
+                ),
+            )
+
+    # Pre-seed a 1h RUG_PULL outcome so only 24h remains to be created.
+    from onchain_platform.domain.schemas.outcome import Outcome
+    from onchain_platform.persistence.postgres.outcomes_insights import save_outcome
+
+    eval_1h = created_25h + timedelta(hours=1)
+    async with AsyncSession(pg_engine, expire_on_commit=False) as session:
+        await save_outcome(
+            session,
+            Outcome.create(
+                entity_id=entity_id,
+                outcome_type=OutcomeType.RUG_PULL,
+                observation_window="1h",
+                label_definition=outcome_rules.label_definition_for("RUG_PULL", "1h"),
+                label_definition_version=outcome_rules.OUTCOME_RULES_VERSION,
+                evaluation_timestamp=eval_1h,
+                evaluated_at=NOW,
+                label_value=True,
+            ),
+        )
+
+    p1, c1, r1 = await outcome_job.run_outcome_evaluation(pg_engine, clock=lambda: NOW)
+
+    from onchain_platform.persistence.postgres.outcomes_insights import list_outcomes_for_entity
+
+    async with AsyncSession(pg_engine, expire_on_commit=False) as session:
+        rows = await list_outcomes_for_entity(session, entity_id)
+
+    # The 24h RUG_PULL label must exist (not swallowed by the pre-seeded 1h one).
+    rug_24h = [
+        r for r in rows if r.observation_window == "24h" and r.outcome_type == OutcomeType.RUG_PULL
+    ]
+    assert len(rug_24h) == 1, f"24h RUG_PULL was suppressed by the window-blind guard: {rows}"
+
+
+async def test_rug_pull_threshold_differs_by_window_job(
+    pg_engine: AsyncEngine,
+    clean_entities: _CleanFn,
+    clean_facts: _CleanFn,
+) -> None:
+    """An ~80% liquidity drop is NOT a 1h rug pull (needs >90%) but IS a 24h
+    one (threshold 70%). Verified through the full job for both windows."""
+    await _clear_timescale(pg_engine)
+    created_25h = NOW - timedelta(hours=25)
+    entity_id = await _seed_pair(
+        pg_engine,
+        fact_id=f"{CHAIN_ID}:0x{'ff' * 32}:0",
+        status=ConfirmationStatus.FINALIZED,
+        event_time=created_25h,
+        clean_entities_fn=clean_entities,
+        clean_facts_fn=clean_facts,
+    )
+    # ~80% liquidity drop between start (100*100) and late (45*45 = 2025).
+    async with AsyncSession(pg_engine, expire_on_commit=False) as session:
+        await ts_repos.save_snapshot(
+            session,
+            ObservationSnapshot.create(
+                entity_id=entity_id,
+                chain_id=CHAIN_ID,
+                snapshot_timestamp=created_25h,
+                observed_at=created_25h,
+                ingested_at=created_25h,
+                source="test",
+                reserve0="100",
+                reserve1="100",
+                price="1",
+            ),
+        )
+        await ts_repos.save_snapshot(
+            session,
+            ObservationSnapshot.create(
+                entity_id=entity_id,
+                chain_id=CHAIN_ID,
+                snapshot_timestamp=NOW - timedelta(hours=2),
+                observed_at=NOW - timedelta(hours=2),
+                ingested_at=NOW - timedelta(hours=2),
+                source="test",
+                reserve0="45",
+                reserve1="45",
+                price="1",
+            ),
+        )
+        # Enough trades so DEAD_TOKEN stays False in both windows (>= 5 swaps).
+        for i in range(3):
+            await ts_repos.save_bar(
+                session,
+                MarketBar.create(
+                    pair_id=entity_id,
+                    chain_id=CHAIN_ID,
+                    interval=BarInterval.ONE_MINUTE,
+                    bar_start_time=created_25h + timedelta(hours=5, minutes=i),
+                    open_="1",
+                    high="1",
+                    low="1",
+                    close="1",
+                    volume_base="0",
+                    volume_quote="0",
+                    trade_count=5,
+                    vwap="1",
+                    buy_volume="0",
+                    sell_volume="0",
+                    source_fact_range=("f1", "f1"),
+                    computed_at=created_25h,
+                ),
+            )
+
+    await outcome_job.run_outcome_evaluation(pg_engine, clock=lambda: NOW)
+
+    from onchain_platform.persistence.postgres.outcomes_insights import list_outcomes_for_entity
+
+    async with AsyncSession(pg_engine, expire_on_commit=False) as session:
+        rows = await list_outcomes_for_entity(session, entity_id)
+
+    rug_by_window = {
+        r.observation_window: r.label_value for r in rows if r.outcome_type == OutcomeType.RUG_PULL
+    }
+    assert rug_by_window.get("1h") is False  # 80% drop < 90% 1h threshold
+    assert rug_by_window.get("24h") is True  # 80% drop >= 70% 24h threshold
