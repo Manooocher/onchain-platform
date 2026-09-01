@@ -4,7 +4,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/Tests-258%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/Tests-331%20passing-brightgreen.svg)](tests/)
 [![Code Style](https://img.shields.io/badge/Code%20Style-Ruff-black.svg)](https://github.com/astral-sh/ruff)
 [![Type Checking](https://img.shields.io/badge/Type%20Checking-mypy-blue.svg)](http://mypy-lang.org/)
 
@@ -22,6 +22,19 @@ The pipeline spans: **data acquisition → facts → state projections → snaps
 
 ---
 
+## Where We Are
+
+- **Milestones 1–10: complete and verified** — walking skeleton → finality → market bars → domain management → state projection → feature engineering → intelligence (GoPlus risk) → outcome engine → research API/dashboard → strategy ranking. MVP exit criterion met (DOC-003).
+- **ML Foundation (Phase 4): next phase, Base chain only.**
+  - **Documentation complete**: execution plan, cohort status, and model cards.
+  - **Phase 0 prerequisites done**: 5 PIT-correct features, 24h observation window + parameterized thresholds, chunked historical cohort-ingestion tooling.
+  - **Implementation: not started** — the `ml/` package does not yet exist.
+- **Data cohort: partially collected.** The historical pair cohort is ~8 pairs vs a 200-pair target (4%) and, critically, **is not durable in the sandbox** (the integration/replay test suite truncates the shared local tables). See `docs/ML_DATA_COHORT.md`.
+
+For the full state, see the [ML Foundation Execution Plan](docs/implementation/MLFoundation-ExecutionPlan.md), the [Implementation Plan](docs/implementation/ImplementationPlan.md), and the [current limitations](#known-limitations).
+
+---
+
 ## Features
 
 ### 🔍 Data Acquisition & Processing
@@ -34,11 +47,16 @@ The pipeline spans: **data acquisition → facts → state projections → snaps
 - **OHLCV market bars** generated directly from finalized swap facts (not snapshots)
 - **State projection** with Redis-backed real-time cache
 - **Observation snapshots** preserving historical state for research
-- **Feature engineering** with Point-in-Time correctness (no lookahead bias)
+- **Feature engineering** with Point-in-Time correctness (no lookahead bias) — **5 PIT-correct features**:
+  - `liquidity_growth_pct_1h`
+  - `price_momentum_zscore_1h`
+  - `volume_quote_delta_1h`
+  - `honeypot_detected_score`
+  - `liquidity_usd_delta_1h`
+- **Outcome labeling** across **1h and 24h observation windows** with parameterized, window-aware thresholds (e.g. an 80% liquidity drop is a 24h rug pull but not a 1h one)
 
 ### 🎯 Intelligence & Strategy
 - **Risk analysis** via deterministic rule engine (GoPlus integration)
-- **Outcome labeling** (Rug Pull / Successful Launch / Dead Token)
 - **Candidate ranking** with explainable scoring factors
 - **Insight generation** for research assistance
 
@@ -70,7 +88,11 @@ External Sources (RPC/WebSocket)
    Strategy (ranking, filtering)
          ↓
    Research Platform (API, dashboard)
+         ↓
+   Machine Learning (ml/*, Phase 4 — documented, not yet implemented)
 ```
+
+**Machine Learning (Phase 4)** is a read-only capability that will read from `analytics/` (features, snapshots, outcomes) and `persistence/`, and will **never write to `blockchain_facts`** (append-only) or mutate a fact/outcome. See the [execution plan](docs/implementation/MLFoundation-ExecutionPlan.md).
 
 ### Data Flow
 
@@ -156,7 +178,25 @@ uv run python -m onchain_platform.main --chain bnb
 
 # Process a specific block and exit
 uv run python -m onchain_platform.main --chain base --start-block 50000000
+
+# Process a bounded block range (chunked historical ingestion)
+uv run python -m onchain_platform.main --chain base --start-block 50400000 --end-block 50400099
 ```
+
+### Historical Cohort Ingestion (ML Foundation data)
+
+Chunked, resumable ingestion tooling builds a real pair cohort for ML Foundation training data:
+
+- [`scripts/chunked_ingestion.py`](scripts/chunked_ingestion.py) — resumable, small-chunk ingestion using the **production collector path** (state persisted to a gitignored `scripts/ingestion_state.json`)
+- [`scripts/probe_pair_density.py`](scripts/probe_pair_density.py) — locates high pair-creation density ranges
+- [`scripts/cohort_config.py`](scripts/cohort_config.py) — the target block range + chunk size
+
+```bash
+uv run python scripts/chunked_ingestion.py --one-chunk       # smoke-test one chunk
+uv run python scripts/chunked_ingestion.py --time-budget 240 # run until ~240s
+```
+
+See [`docs/ML_DATA_COHORT.md`](docs/ML_DATA_COHORT.md) for cohort status and how to complete it on a long-lived VM.
 
 ---
 
@@ -177,6 +217,12 @@ onchain_platform/
 │   ├── research/                 # API & dashboard
 │   │   ├── api/                  # FastAPI endpoints
 │   │   └── dashboard/            # Streamlit UI
+│   ├── ml/                       # Machine Learning (Phase 4 — planned, not yet implemented)
+│   │   ├── datasets/            # dataset assembly, splits, normalization
+│   │   ├── models/              # classifiers & regressors (sklearn/XGBoost)
+│   │   ├── training/            # trainer, hyperparameter tuning
+│   │   ├── tracking/            # MLflow, metrics, model registry
+│   │   └── serving/             # prediction API
 │   ├── persistence/              # Database repositories
 │   ├── transport/                # Event streams, state cache
 │   └── platform/                 # Config, logging, scheduler
@@ -207,7 +253,7 @@ make test-replay   # Determinism verification (byte-identical outputs)
 ```
 
 **Verified counts (current HEAD):**
-- **258 unit + integration + schema** passing (1 order-dependent skip), **7 replay**, **1 live smoke**.
+- **331 unit + integration + schema** passing (+2 env-gated live skips), **7 replay**, **1 live smoke**.
 
 **Test Breakdown:**
 - **Unit tests**: Core logic, schema validation
@@ -248,14 +294,29 @@ confirmation_depth:
 
 ---
 
+## Known Limitations
+
+Honest current constraints (see [ML Data Cohort Status](docs/ML_DATA_COHORT.md) and the [execution plan](docs/implementation/MLFoundation-ExecutionPlan.md)):
+
+- **Data cohort is ~8 pairs (4% of the 200-pair target) and is not durable in the sandbox.** The integration/replay test suite truncates the shared local TimescaleDB tables, so the live DB typically holds only a small fixture set (e.g. 1 pair / a handful of facts). A durable cohort requires running on a long-lived VM where tests do not wipe the tables.
+- **Infrastructure:** Ubuntu on VMware only — no dedicated server. Long-lived processes are terminated after ~4.7 minutes, which is why cohort ingestion is chunked and resumable.
+- **ML Foundation:** documentation is complete and Phase 0 prerequisites (5 features, 24h window, chunked ingestion tooling) are done, but **implementation has not started** — there is no `ml/` package or trained model yet.
+- **Class balance is unknown:** the RUG_PULL positive rate has not been measured on a durable cohort, so no training threshold or anomaly-detection decision can be set yet.
+
+**Next steps:** complete the data cohort on a long-lived VM, then implement the ML Foundation pipeline (see the [execution plan](docs/implementation/MLFoundation-ExecutionPlan.md)).
+
+---
+
 ## Documentation
 
+- [ML Foundation Execution Plan](docs/implementation/MLFoundation-ExecutionPlan.md)
+- [ML Data Cohort Status](docs/ML_DATA_COHORT.md)
+- [ML Model Cards](docs/ML_MODELS.md)
 - [Architecture Overview](docs/ARCHITECTURE.md)
 - [API Reference](docs/API.md)
 - [Developer Guide](docs/DEVELOPMENT.md)
 - [Domain Model](docs/006-DomainModel.md)
 - [Canonical Schemas](docs/012-CanonicalSchema.md)
-- [API Contracts](docs/015-APIContracts.md)
 - [Coding Standards](docs/013-CodingStandards.md)
 - [Implementation Plans](docs/implementation/)
 - [Architecture Decision Records](docs/adr/)
