@@ -293,6 +293,32 @@ It does NOT:
 
 ---
 
+# 8. Machine Learning (Phase 4)
+
+## Responsibility
+
+Produce calibrated predictions from platform data (features + outcomes) so research is *predictive*, not just descriptive. Phase 4 (Roadmap DOC-005) — Base chain only. Full plan: `docs/implementation/MLFoundation-ExecutionPlan.md`.
+
+Responsibilities include:
+
+- Dataset assembly (features + outcomes → labeled rows)
+- Offline model training (scikit-learn + XGBoost on tabular data)
+- Model evaluation (AUC-ROC, precision/recall, MAE, NDCG) vs baselines
+- Experiment tracking (MLflow) + local registry
+- Model inference via `POST /v1/models/{model_name}/predict`
+
+**Read-only constraint (non-negotiable):** ML **reads** from `analytics/` (features, snapshots, outcomes) and `persistence/` only. It **never writes** to `blockchain_facts` (append-only, DOC-013), never mutates a fact or outcome, and never writes to the analytics tables it consumes. Model inference is read-only by construction — it returns predictions, it does not record state.
+
+It is strictly advisory (like Strategy): it predicts/recommends, it does not execute trades or manage capital.
+
+It does NOT:
+
+- Execute trades / manage portfolios
+- Re-write or fabricate facts or outcomes (read-only over persistence)
+- Run in real time over the ingestion pipeline (offline training + batch/on-demand inference)
+
+---
+
 # Capability Dependencies
 
 | Capability | Depends On |
@@ -304,6 +330,7 @@ It does NOT:
 | Intelligence | Market Analytics, Domain Management |
 | Research Platform | Market Analytics, Intelligence |
 | Strategy | Research Platform |
+| Machine Learning (Phase 4) | Market Analytics, Research Platform (features), Persistence (read-only) |
 
 ---
 
@@ -318,6 +345,7 @@ It does NOT:
 | Intelligence | Risk Engine |
 | Research Platform | API Layer, Dashboard |
 | Strategy | Strategy Engine |
+| Machine Learning (Phase 4) | ML Dataset/Training/Inference Engine (`ml/`) |
 
 ---
 

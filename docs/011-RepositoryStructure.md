@@ -211,6 +211,21 @@ Both packages are intentionally thin for the MVP. `strategy/ranking.py` in parti
 
 ---
 
+## `ml/` — Capability: Machine Learning (DOC-009 § 8, Roadmap Phase 4)
+
+```text
+ml/
+├── datasets/            # assembler (features+outcomes → labeled rows), time-based splits, normalization
+├── models/              # BaseModel protocol + classifiers (LR/RF/XGB) + regressors (Ridge/GBM/XGB)
+├── training/            # trainer (MLflow autologging, time-CV, early stopping), tune (capped grid)
+├── tracking/            # MLflow wrapper (NONE toggle), metrics (AUC/MAE/NDCG/MRR), local registry.json
+└── serving/             # predictor (load model+normalizer), api.py build_ml_router()
+```
+
+**Import contract (the "ML Dependency Rule"):** `ml/` **MAY import** `domain`, `analytics`, `persistence`, `platform`, `transport`. It **MAY NOT import** `acquisition`, `processing`, `domain_management`, `research`, `strategy`, `intelligence`. ML reads from `analytics/` (features/outcomes) and `persistence/` (read-only) and serves its own router via the composition root — it never reads through `research/` and never writes facts. See § Enforcing the Dependency Rule for the `forbidden` contract to add.
+
+---
+
 ## `research/` — Capability: Research Platform (DOC-009)
 
 ```text
@@ -441,7 +456,21 @@ forbidden_modules = [
     "onchain_platform.research",
     "onchain_platform.strategy",
 ]
+
+[[tool.importlinter.contracts]]
+name = "Machine Learning may only depend on Market Analytics and cross-cutting infra (read-only)"
+type = "forbidden"
+source_modules = ["onchain_platform.ml"]
+forbidden_modules = [
+    "onchain_platform.acquisition",
+    "onchain_platform.processing",
+    "onchain_platform.domain_management",
+    "onchain_platform.intelligence",
+    "onchain_platform.research",
+    "onchain_platform.strategy",
+]
 ```
+*(Phase 4 — add to `pyproject.toml` when the `ml/` package lands. `ml/` MAY import `domain`, `analytics`, `persistence`, `platform`, `transport`; the `forbidden` list above closes the gap so ML never reads through `research/` or reaches downward into acquisition/processing. This brings the count to 9 contracts when enabled.)*
 
 An earlier version of this section had a `type = "independence"` contract with a single module in it — that is a no-op: `independence` checks that the *listed* modules don't import each other, and with only one module listed there was nothing to check against. `domain`'s actual independence guarantee comes from a different place below.
 

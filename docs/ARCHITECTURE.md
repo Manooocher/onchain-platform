@@ -38,6 +38,9 @@ External Sources (EVM RPC endpoints)
         │
         ▼
    Research Platform (research/)    — FastAPI REST API + Streamlit dashboard
+        │
+        ▼
+   Machine Learning (ml/, Phase 4)  — offline training + prediction (READ-ONLY over analytics/persistence)
 ```
 
 **Cross-cutting infrastructure** (importable by any capability, never importing one): `persistence/` (Postgres/Timescale + Redis), `transport/` (state cache, event streams), `platform/` (config, logging, scheduler).
@@ -62,6 +65,13 @@ Finalized facts → State Projection (Redis) → Observation snapshots → Marke
 Features + Outcomes → Strategy ranking → Research datasets → API / dashboard
 ```
 
+### 4. Machine Learning (Phase 4)
+```
+Features (PIT) + Outcomes → Dataset assembly → Offline training (MLflow) → Model registry
+   → POST /v1/models/{name}/predict (read-only inference)
+```
+ML sits at the top of the capability stack. It **reads only** from `analytics/` (features, snapshots, outcomes) and `persistence/`; it **never writes** to `blockchain_facts` (append-only, DOC-013), never mutates a fact or outcome, and never writes to the analytics tables it consumes. Inference returns predictions — it does not record state. Full plan: `docs/implementation/MLFoundation-ExecutionPlan.md`.
+
 ## Storage Strategy
 
 - **PostgreSQL / TimescaleDB** (single service `timescaledb`, port 5433): operational entities (`tokens`, `trading_pairs`, `wallets`, `outcomes`, `insights`) **and** time-series hypertables (`market_bars`, `observation_snapshots`, `features`) with chunking + compression policies.
@@ -74,6 +84,7 @@ Enforced by `import-linter` in `pyproject.toml` (DOC-011). The layer order (top 
 ```
 strategy → research → intelligence → analytics → domain_management → processing → acquisition → domain
 ```
+ML (Phase 4) sits above `analytics` and is constrained by its own `forbidden` contract (see `ml/` package) to read `analytics`, `persistence`, `platform`, `transport` only — it never reads through `research/` and never reaches downward into `acquisition`/`processing`.
 
 Plus `forbidden` contracts closing the gaps (e.g. `research/` may not import `strategy/`; `analytics/` may not import `intelligence/`). `persistence/`, `transport/`, `platform/` are cross-cutting and must never import a capability. `main.py` is the composition root — the only file allowed to see multiple capabilities (exempt).
 

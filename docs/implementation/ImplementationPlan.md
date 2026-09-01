@@ -171,6 +171,18 @@ Nothing here is a design decision — everything below was already decided in DO
 
 ---
 
+# ML Foundation — Phase 4 (Roadmap DOC-005)
+
+**Goal:** make the platform *predictive*, not just descriptive — the first machine-learning models trained on platform data.
+
+**Status:** planning approved. Full execution plan at `docs/implementation/MLFoundation-ExecutionPlan.md`. **Phase 0 prerequisites complete:** 3 new PIT-correct features (`283c15e`), 24h observation window + parameterized thresholds (`7955cc7`), chunked historical cohort-ingestion tooling (`7e9fac2`). ⚠️ **Dependent on data-cohort completion** — the durable cohort is ~8 pairs (4% of the 200 target) and is not durable in the test-truncated sandbox DB; see `docs/ML_DATA_COHORT.md`.
+
+**What gets built (Base chain only — speed-first strategic decision):** `ml/datasets` (assembler, time-based splits, normalization), `ml/tracking` (MLflow, metrics, local registry), `ml/models` (classifier/regressor for Rug-Pull, Liquidity, Momentum) + `ml/training` (trainer, tune), `ml/serving` (`POST /v1/models/{model_name}/predict`, own router, own session dependency).
+
+**Definition of done (realistic, given data):** the dataset → training → evaluation → serving pipeline works **end-to-end** on available + fixture data, ≥3 models trained and honestly compared against baselines, all tracked in MLflow. NOT "production-quality model" — that is explicitly out of reach with ~8 durable pairs and would be dishonest to claim.
+
+---
+
 # What Not To Build Yet
 
 Every item below has a home already reserved for it (DOC-005's later phases, DOC-009's Future Capabilities) — reserved specifically so building it now would be premature, not forgotten:

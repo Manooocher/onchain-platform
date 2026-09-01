@@ -149,6 +149,8 @@ The MVP is complete.
 
 # Phase 4 — Machine Learning Foundation
 
+> **Strategic decision (approved):** pursue Phase 4 with **Base chain only**, prioritizing speed to a working result over multi-chain breadth. Full plan: `docs/implementation/MLFoundation-ExecutionPlan.md`. Cohort status: `docs/ML_DATA_COHORT.md`.
+
 Objective:
 
 Introduce predictive capabilities.
@@ -160,16 +162,18 @@ Capabilities:
 - model evaluation
 - experiment tracking
 
-Potential Models:
+Potential Models (first cohort — Base chain):
 
-- scam detection
-- wallet classification
 - rug pull prediction
 - momentum scoring
+- liquidity forecasting
 
 Success Criteria:
 
-Models produce measurable research value.
+- Dataset → training → evaluation → serving pipeline works **end-to-end** on available + fixture data.
+- ≥3 models trained (Rug Pull / Liquidity / Momentum) and honestly compared against baselines.
+- All experiments tracked in MLflow.
+- ⚠️ With the current cohort (~8 durable pairs), "models produce measurable research value" is a **pipeline-validated** target, not a production-quality claim.
 
 ---
 
