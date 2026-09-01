@@ -44,7 +44,7 @@ from onchain_platform.acquisition.providers.base import (
     BlockMetadata,
     RawLog,
 )
-from onchain_platform.domain.exceptions import AcquisitionError
+from onchain_platform.domain.exceptions import AcquisitionError, DomainValidationError
 
 logger = structlog.get_logger(__name__)
 
@@ -173,8 +173,24 @@ class Collector:
                 observed_at=self._clock(),
                 dex=dex,
             )
-            await self._handler(collected)
-            forwarded += 1
+            try:
+                await self._handler(collected)
+                forwarded += 1
+            except DomainValidationError as exc:
+                # A single log that cannot be decoded (e.g. a Mint/Burn event
+                # missing its indexed sender topic) must not abort an entire
+                # block — and certainly not a multi-block chunk or live tail.
+                # DOC-013 § Exception Hierarchy / graceful degradation: log it,
+                # skip it, continue. Consensus/immutability invariants are
+                # untouched; this is an ignored input, not a state change.
+                logger.warning(
+                    "collected_log_skipped",
+                    chain_id=self._chain_id,
+                    block_number=block_number,
+                    tx_hash=raw_log.transaction_hash,
+                    log_index=raw_log.log_index,
+                    reason=str(exc),
+                )
         # Mandatory structured fields for acquisition/ (DOC-013 §
         # Observability in Code): chain_id, block_number, tx_hash where
         # applicable.

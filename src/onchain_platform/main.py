@@ -90,7 +90,12 @@ def _build_provider(settings: Settings, chain: str) -> BlockchainProvider:
         return LocalNodeProvider(settings.rpc_url)
 
 
-async def _run_live(settings: Settings, start_block: int | None, chain: str) -> None:
+async def _run_live(
+    settings: Settings,
+    start_block: int | None,
+    chain: str,
+    end_block: int | None = None,
+) -> None:
     """Live ingestion loop: provider → collector → processor → Postgres.
 
     Milestone 2: wires the FinalityEngine for confirmation lifecycle
@@ -304,7 +309,14 @@ async def _run_live(settings: Settings, start_block: int | None, chain: str) -> 
 
     try:
         if effective_start is not None:
-            await collector.process_range(effective_start, effective_start)
+            # Bounded replay: process [start_block, end_block] (end_block
+            # defaults to start_block for single-block smoke mode). This is the
+            # SAME single processing path (collector.process_range) used by live
+            # ingestion — ADR-006 § Single Processing Path, which is what makes
+            # chunked historical cohort ingestion (Phase 0 Step 3) production-
+            # identical rather than a re-implementation.
+            replay_end = end_block if end_block is not None else effective_start
+            await collector.process_range(effective_start, replay_end)
         else:
             head = await provider.get_chain_head()
             await collector.run_from(head)
@@ -333,13 +345,21 @@ def main() -> None:
         "--start-block",
         type=int,
         default=None,
-        help="Process exactly this block number and exit (replay/smoke mode). "
-        "Omit to tail the chain head continuously.",
+        help="Process starting at this block number and exit (replay/smoke "
+        "mode). Use with --end-block to ingest a bounded range; omit both to "
+        "tail the chain head continuously.",
+    )
+    parser.add_argument(
+        "--end-block",
+        type=int,
+        default=None,
+        help="Inclusive upper bound for --start-block replay (bounded chunked "
+        "historical ingestion). Defaults to --start-block when omitted.",
     )
     args = parser.parse_args()
 
     try:
-        asyncio.run(_run_live(settings, args.start_block, args.chain))
+        asyncio.run(_run_live(settings, args.start_block, args.chain, args.end_block))
     except (PlatformError, DomainValidationError) as exc:
         # PlatformErrors are the sanctioned boundary shape (DOC-013 §
         # Exception Hierarchy) — log and exit nonzero; a raw traceback here

@@ -258,3 +258,55 @@ def test_fact_processor_non_pair_created_raises_domain_validation_error() -> Non
     )
     with pytest.raises(DomainValidationError):
         processor.process(collected)
+
+
+async def test_collector_skips_malformed_log_does_not_abort_range() -> None:
+    """A log the handler rejects (e.g. Mint/Burn with a missing sender topic)
+    must be logged and skipped, not abort the whole block/chunk (Phase 0 Step 3
+    robustness fix — DOC-013 graceful degradation, no cascade failures)."""
+    from onchain_platform.acquisition.providers.base import BlockMetadata
+
+    block = BlockMetadata(
+        number=100,
+        hash="0x" + "aa" * 32,
+        parent_hash="0x" + "00" * 32,
+        timestamp=PINNED_OBSERVED_AT,
+    )
+
+    good_log = SAMPLE_LOG
+    bad_log = SAMPLE_LOG.model_copy(
+        update={
+            "topics": (PAIR_CREATED_TOPIC,),  # only signature — no token topics
+            "transaction_hash": "0x" + "cc" * 32,
+            "log_index": 0,
+        }
+    )
+
+    provider = FakeProvider(
+        blocks={100: block},
+        logs_by_block={100: [good_log, bad_log]},
+        head=100,
+    )
+
+    received: list[CollectedLog] = []
+
+    async def raiser_handler(collected: CollectedLog) -> None:
+        if len(collected.raw_log.topics) < 3:
+            raise DomainValidationError("PairCreated requires 3 topics")
+        received.append(collected)
+
+    collector = Collector(
+        provider,
+        chain_id=BASE_CHAIN_ID,
+        filters=[LogFilter(address=FACTORY, topic=PAIR_CREATED_TOPIC, dex="uniswap_v2")],
+        handler=raiser_handler,
+        clock=lambda: PINNED_OBSERVED_AT,
+        poll_interval_seconds=0.0,
+    )
+
+    count = await collector.process_range(100, 100)
+
+    # The bad log was skipped; the good one was forwarded. No exception escaped.
+    assert count == 1
+    assert len(received) == 1
+    assert received[0].raw_log == good_log

@@ -59,6 +59,9 @@ env/
 .continue/
 .claude/
 AUDIT_REPORT*.md
+# Local runtime state for phase-0 chunked historical cohort ingestion
+# (scripts/chunked_ingestion.py). Never committed — it is per-session progress.
+scripts/ingestion_state.json
 
 # ---------------------------------------------------------------------------
 # Environment & secrets
