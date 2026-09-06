@@ -11,6 +11,8 @@ from decimal import Decimal
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from onchain_platform.analytics import feature_engine
+from onchain_platform.domain.entities.token import Token
+from onchain_platform.domain.entities.trading_pair import TradingPair
 from onchain_platform.domain.schemas.enums import BarInterval, EntityType
 from onchain_platform.domain.schemas.insight import Insight
 from onchain_platform.domain.schemas.market_bar import MarketBar
@@ -274,21 +276,68 @@ def _ml_clear_insight(generated_at: datetime, entity_id: str = _ML_ENTITY) -> In
 async def test_volume_quote_delta_1h_from_real_bars(
     pg_engine: AsyncEngine,
 ) -> None:
-    """Insert bars; compute volume delta from real TimescaleDB."""
+    """Insert bars; compute volume delta from real TimescaleDB.
+
+    Issue 3 regression: volume must be normalized by the quote token's
+    decimals (human-readable units, not 10^18-scale raw amounts).
+    """
+    from eth_utils.address import to_checksum_address
+
     from onchain_platform.analytics.feature_engine import compute_volume_quote_delta_1h
+    from onchain_platform.domain.ids import pair_canonical_id, token_canonical_id
+    from onchain_platform.persistence.postgres import entity_repositories as er
+
+    # A dedicated pair whose quote token has decimals=2 (scale=100) so the
+    # normalized volume is deterministic: raw 1000/2000 → 10/20 human units.
+    pool = to_checksum_address("0x" + "77" * 20)
+    tok0 = to_checksum_address("0x4200000000000000000000000000000000000006")  # WETH
+    tok1 = to_checksum_address("0x" + "88" * 20)
+    ent = pair_canonical_id(CHAIN_ID, pool)
+    async with AsyncSession(pg_engine, expire_on_commit=False) as session:
+        await er.save_token(
+            session,
+            Token(
+                canonical_id=token_canonical_id(CHAIN_ID, tok0),
+                chain_id=CHAIN_ID,
+                contract_address=tok0,
+                decimals=18,
+            ),
+        )
+        await er.save_token(
+            session,
+            Token(
+                canonical_id=token_canonical_id(CHAIN_ID, tok1),
+                chain_id=CHAIN_ID,
+                contract_address=tok1,
+                decimals=2,  # scale=100
+            ),
+        )
+        await er.save_trading_pair(
+            session,
+            TradingPair(
+                canonical_id=ent,
+                chain_id=CHAIN_ID,
+                dex="uniswap_v2",
+                base_token_id=token_canonical_id(CHAIN_ID, tok0),
+                quote_token_id=token_canonical_id(CHAIN_ID, tok1),
+                pool_address=pool,
+                creation_block=100,
+                creation_fact_id=f"{CHAIN_ID}:0x{'dd' * 32}:0",
+            ),
+        )
 
     async with AsyncSession(pg_engine, expire_on_commit=False) as session:
-        await ts_repos.save_bar(session, _ml_bar(_PRIOR_105M, "500"))
-        await ts_repos.save_bar(session, _ml_bar(_PRIOR_90M, "500"))
-        await ts_repos.save_bar(session, _ml_bar(_CURRENT_30M, "1000"))
-        await ts_repos.save_bar(session, _ml_bar(_ASOF, "2000"))
+        await ts_repos.save_bar(session, _ml_bar(_PRIOR_105M, "500", ent))
+        await ts_repos.save_bar(session, _ml_bar(_PRIOR_90M, "500", ent))
+        await ts_repos.save_bar(session, _ml_bar(_CURRENT_30M, "1000", ent))
+        await ts_repos.save_bar(session, _ml_bar(_ASOF, "2000", ent))
 
     async with AsyncSession(pg_engine, expire_on_commit=False) as session:
-        result = await compute_volume_quote_delta_1h(session, _ML_ENTITY, CHAIN_ID, _ASOF, _ASOF)
+        result = await compute_volume_quote_delta_1h(session, ent, CHAIN_ID, _ASOF, _ASOF)
     assert result is not None
     assert result.feature_name == "volume_quote_delta_1h"
-    # prior sum = 1000, current sum = 3000 → +2000.
-    assert abs(result.value - 2000.0) < 1e-10
+    # Human-readable: (2000+1000 - 500-500) raw / 100 (decimals=2) = 20.
+    assert abs(result.value - 20.0) < 1e-10
     assert result.window == "1h"
     assert len(result.inputs) == 4
 
@@ -423,8 +472,51 @@ async def test_new_features_pit_do_not_use_future_data(
         compute_volume_quote_delta_1h,
     )
 
-    entity = "eip155:8453/pair:0xfa11"
     future = _ASOF + timedelta(hours=1)
+    # Issue 3: volume is normalized by the quote token's decimals, so seed a
+    # pair whose quote token has decimals=2 (scale 100) for a meaningful PIT
+    # volume assertion (raw 2000 -> 20 human units).
+    from eth_utils.address import to_checksum_address
+
+    from onchain_platform.domain.ids import pair_canonical_id, token_canonical_id
+    from onchain_platform.persistence.postgres import entity_repositories as er
+
+    pool = to_checksum_address("0x" + "fa" * 20)
+    tok0 = to_checksum_address("0x4200000000000000000000000000000000000006")
+    tok1 = to_checksum_address("0x" + "19" * 20)
+    entity = pair_canonical_id(CHAIN_ID, pool)
+    async with AsyncSession(pg_engine, expire_on_commit=False) as session:
+        await er.save_token(
+            session,
+            Token(
+                canonical_id=token_canonical_id(CHAIN_ID, tok0),
+                chain_id=CHAIN_ID,
+                contract_address=tok0,
+                decimals=18,
+            ),
+        )
+        await er.save_token(
+            session,
+            Token(
+                canonical_id=token_canonical_id(CHAIN_ID, tok1),
+                chain_id=CHAIN_ID,
+                contract_address=tok1,
+                decimals=2,
+            ),
+        )
+        await er.save_trading_pair(
+            session,
+            TradingPair(
+                canonical_id=entity,
+                chain_id=CHAIN_ID,
+                dex="uniswap_v2",
+                base_token_id=token_canonical_id(CHAIN_ID, tok0),
+                quote_token_id=token_canonical_id(CHAIN_ID, tok1),
+                pool_address=pool,
+                creation_block=100,
+                creation_fact_id=f"{CHAIN_ID}:0x{'ee' * 32}:0",
+            ),
+        )
     # Priced state available BEFORE as_of.
     async with AsyncSession(pg_engine, expire_on_commit=False) as session:
         await ts_repos.save_bar(session, _ml_bar(_PRIOR_90M, "1000", entity))
@@ -444,8 +536,9 @@ async def test_new_features_pit_do_not_use_future_data(
         honeypot = await compute_honeypot_detected_score(session, entity, CHAIN_ID, _ASOF, _ASOF)
         liq = await compute_liquidity_usd_delta_1h(session, entity, CHAIN_ID, _ASOF, _ASOF)
 
-    # Future bar (999999) excluded → current +3000, prior +1000 → +2000.
-    assert vol is not None and abs(vol.value - 2000.0) < 1e-10
+    # Future bar (999999) excluded; current +3000, prior +1000 → +2000 raw,
+    # / 100 (decimals=2) = 20 human-readable units.
+    assert vol is not None and abs(vol.value - 20.0) < 1e-10
     # Future clear-insight excluded → as of as_of the latest honeypot insight wins → 100.
     assert honeypot is not None and honeypot.value == 100.0
     # Future snapshot (999999) excluded → 2000 - 5000 = -3000.

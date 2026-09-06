@@ -11,7 +11,7 @@ Conventions).
 
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -271,6 +271,7 @@ async def test_volume_quote_delta_1h_acceleration() -> None:
     from onchain_platform.analytics.feature_engine import compute_volume_quote_delta_1h
 
     session = AsyncMock()
+    import onchain_platform.persistence.postgres.entity_repositories as entity_repos
     import onchain_platform.persistence.timescale.repositories as ts_repos
 
     # as_of = 12:00; window_start = 11:00. Current window [11:00, 12:00],
@@ -279,6 +280,8 @@ async def test_volume_quote_delta_1h_acceleration() -> None:
     prior_90m = PINNED - timedelta(minutes=90)
     prior_105m = PINNED - timedelta(minutes=105)
     original = ts_repos.list_bars
+    original_pair = entity_repos.get_trading_pair
+    original_token = entity_repos.get_token
     ts_repos.list_bars = AsyncMock(
         return_value=[
             _make_bar_with_volume(prior_105m, "500"),  # prior 1h
@@ -287,15 +290,26 @@ async def test_volume_quote_delta_1h_acceleration() -> None:
             _make_bar_with_volume(PINNED, "2000"),  # current 1h
         ]
     )
+    # Issue 3: normalize by quote token decimals. Use decimals=1 (scale=10)
+    # so the raw 4000 total → 400 human-readable units → prior 100, current 300.
+    pair_mock = MagicMock()
+    pair_mock.quote_token_id = f"eip155:{CHAIN_ID}/token:{'00' * 20}"
+    token_mock = MagicMock()
+    token_mock.decimals = 1
+    entity_repos.get_trading_pair = AsyncMock(return_value=pair_mock)
+    entity_repos.get_token = AsyncMock(return_value=token_mock)
     try:
         result = await compute_volume_quote_delta_1h(session, ENTITY_ID, CHAIN_ID, PINNED, PINNED)
     finally:
         ts_repos.list_bars = original
+        entity_repos.get_trading_pair = original_pair
+        entity_repos.get_token = original_token
 
     assert result is not None
     assert result.feature_name == "volume_quote_delta_1h"
     assert result.window == "1h"
-    assert abs(result.value - 2000.0) < 1e-10
+    # (3000-1000)/10 = 200
+    assert abs(result.value - 200.0) < 1e-10
     assert len(result.inputs) == 4
 
 

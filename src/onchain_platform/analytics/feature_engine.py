@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from onchain_platform.domain.schemas.enums import BarInterval, EntityType
 from onchain_platform.domain.schemas.feature import Feature
 from onchain_platform.domain.schemas.observation_snapshot import ObservationSnapshot
+from onchain_platform.persistence.postgres import entity_repositories as entity_repos
 from onchain_platform.persistence.timescale import repositories as ts_repos
 
 logger = structlog.get_logger(__name__)
@@ -45,6 +46,26 @@ def assert_not_none(value: str | None) -> str:
     the type checker without a runtime assert that would raise on valid data."""
     assert value is not None
     return value
+
+
+async def _quote_token_decimals(session: AsyncSession, entity_id: str) -> Decimal:
+    """Resolve the quote token's decimals for a pair (for volume normalization).
+
+    `market_bars.volume_quote` is the QUOTE token's raw accumulated amount
+    (smallest denomination, e.g. 1 USDC = 10^6 raw, 1 WETH = 10^18 raw). To
+    express volume in human-readable token units (Issue 3), we divide by
+    10^decimals of the quote leg. Falls back to the Token default (18) when the
+    pair or quote token cannot be resolved — never raises, so volume features
+    still compute for a transiently-unresolvable pair (with a documented scale
+    caveat).
+    """
+    pair = await entity_repos.get_trading_pair(session, entity_id)
+    if pair is None:
+        return Decimal(10) ** Decimal(18)
+    token = await entity_repos.get_token(session, pair.quote_token_id)
+    if token is None:
+        return Decimal(10) ** Decimal(18)
+    return Decimal(10) ** Decimal(token.decimals)
 
 
 async def compute_liquidity_growth_pct_1h(
@@ -214,13 +235,22 @@ async def compute_volume_quote_delta_1h(
     # repository's ordering convention.
     bars.sort(key=lambda b: b.bar_start_time)
 
+    # Issue 3 fix: `market_bars.volume_quote` is the quote token's RAW
+    # accumulated amount (smallest denomination). Express volume in
+    # human-readable token units by dividing by 10^quote_decimals so the
+    # feature is comparable across pools and isn't dominated by 10^18
+    # magnitude (e.g. -7.5e27). Deterministic — decimals come from the static
+    # Token registry.
+    quote_scale = await _quote_token_decimals(session, entity_id)
+
     current_sum = Decimal("0")
     previous_sum = Decimal("0")
     for bar in bars:
+        quote_units = Decimal(bar.volume_quote) / quote_scale
         if bar.bar_start_time >= window_start:
-            current_sum += Decimal(bar.volume_quote)
+            current_sum += quote_units
         else:
-            previous_sum += Decimal(bar.volume_quote)
+            previous_sum += quote_units
 
     delta = current_sum - previous_sum
 
