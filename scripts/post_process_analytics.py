@@ -38,8 +38,11 @@ from decimal import Decimal
 import redis.asyncio as redis
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
-from onchain_platform.analytics import feature_engine, outcome_job, projection_engine
+from onchain_platform.acquisition.providers.multi_price_oracle import MultiPriceOracle
+from onchain_platform.analytics import feature_engine, outcome_job, projection_engine, snapshot_job
+from onchain_platform.analytics.pool_classifier import classify_pool
 from onchain_platform.analytics.trade_aggregator import aggregate_swaps_to_bar, bucket_start
+from onchain_platform.domain.money import decimal_to_plain_string
 from onchain_platform.domain.schemas.blockchain_fact import (
     LiquidityAddedPayload,
     LiquidityRemovedPayload,
@@ -57,6 +60,25 @@ from onchain_platform.persistence.timescale import repositories as ts_repos
 
 _DEFAULT_DSN = "postgresql+asyncpg://onchain@localhost:5433/onchain_platform"
 _DEFAULT_REDIS = "redis://localhost:6379/0"
+# Deterministic, configurable ETH/USD price for WETH liquidity_usd backfill.
+# There is no live Chainlink feed wired in this context; a fixed constant (from
+# env ETH_USD_PRICE, default 3500) lets WETH pools get a priced liquidity_usd
+# while remaining deterministic. Documented limitation — swap for a real feed
+# in production.
+_DEFAULT_ETH_USD = Decimal(os.environ.get("ETH_USD_PRICE", "3500"))
+
+
+class _StaticEthPriceProvider:
+    """Deterministic ETH/usd price provider for the MultiPriceOracle (WETH).
+
+    Returns the configured constant. No I/O — satisfies DOC-013 determinism.
+    """
+
+    def __init__(self, price_usd: Decimal) -> None:
+        self._price = price_usd
+
+    async def __call__(self) -> Decimal:
+        return self._price
 
 
 def _clock() -> datetime:
@@ -172,12 +194,22 @@ async def _reserves_at(
 
 
 async def backfill_historical_snapshots(
-    engine, redis_client, chain_id: int, offsets_min: tuple[int, ...]
+    engine,
+    redis_client,
+    chain_id: int,
+    offsets_min: tuple[int, ...],
+    oracle: MultiPriceOracle | None = None,
 ) -> int:
     """Generate a PIT-correct ObservationSnapshot for every pair at each
     creation + offset. Uses the pair's PAIR_CREATED fact event_time as the
     creation anchor; snapshots at times where a pair has any data are written
-    (idempotent by snapshot_id)."""
+    (idempotent by snapshot_id).
+
+    When `oracle` is provided, each snapshot also gets liquidity_usd +
+    provenance + confidence via the domain-aware multi-source oracle (Bug 1):
+    USDC/stablecoin pools -> STATIC $1.0; WETH pools -> CHAINLINK (configurable
+    ETH price); exotic pools -> NULL (honest, no fabricated USD).
+    """
     written = 0
     async with AsyncSession(engine, expire_on_commit=False) as session:
         pairs, _ = await entity_repositories.list_pairs(session, chain_id=chain_id)
@@ -186,10 +218,26 @@ async def backfill_historical_snapshots(
             if created_fact is None:
                 continue
             anchor = created_fact.event_time
+            # Classify the pool once per pair (Bug 1 — determine quote type).
+            token0 = snapshot_job._token_address(pair.base_token_id)
+            token1 = snapshot_job._token_address(pair.quote_token_id)
+            pool_class = classify_pool(pair.pool_address, token0, token1)
+            quote_type = pool_class.quote_token_type.value
             for offset_min in offsets_min:
                 ts = anchor + timedelta(minutes=offset_min)
                 r0, r1 = await _reserves_at(session, chain_id, pair.pool_address, ts)
                 price = (r1 / r0) if r0 > 0 else Decimal(0)
+                reserves = (format(r0, "f"), format(r1, "f"))
+
+                liquidity_usd: str | None = None
+                source: str | None = None
+                confidence: float | None = None
+                if oracle is not None:
+                    quote_result = await oracle.get_pool_result(reserves, pool_class, ts)
+                    liquidity_usd, source, confidence = snapshot_job.liquidity_usd_for_quote(
+                        reserves, pool_class, quote_result
+                    )
+
                 snapshot = ObservationSnapshot(
                     schema_version="1.0",
                     snapshot_id=f"{pair.canonical_id}|{ts.isoformat()}|post_process",
@@ -199,9 +247,13 @@ async def backfill_historical_snapshots(
                     observed_at=ts,
                     ingested_at=_clock(),
                     source="post_process",
-                    reserve0=format(r0, "f"),
-                    reserve1=format(r1, "f"),
-                    price=format(price, "f"),
+                    reserve0=reserves[0],
+                    reserve1=reserves[1],
+                    price=decimal_to_plain_string(price),
+                    liquidity_usd=liquidity_usd,
+                    liquidity_usd_source=source,
+                    liquidity_usd_confidence=confidence,
+                    quote_token_type=quote_type,
                 )
                 inserted = await ts_repos.save_snapshot(session, snapshot)
                 if inserted:
@@ -210,10 +262,21 @@ async def backfill_historical_snapshots(
 
 
 async def compute_features(engine, redis_client, chain_id: int) -> int:
-    """Compute all 5 features for every pair with state, using the production
-    feature_engine functions (PIT-correct; saves via save_feature upsert)."""
+    """Compute all 5 features for every pair, at each historical snapshot
+    timestamp (Bug 2 — time alignment).
+
+    Feature functions query snapshots/bars within `[as_of - 1h, as_of]`. If we
+    pass `as_of = now()` (wall clock at script run), those windows exclude all
+    historical snapshots/bars (which are timestamped in the past), so every
+    feature returns None. Fix: for each pair, read its distinct historical
+    snapshot timestamps and call every feature function with
+    `as_of = snapshot_timestamp`. This aligns the window with actual data and
+    is deterministic (PIT: features never see data after their as_of).
+
+    Idempotent via save_feature's ON CONFLICT upsert on
+    (feature_name, entity_id, as_of_timestamp).
+    """
     created = 0
-    # Dedicated read of pairs for determinism (no Redis iteration here).
     feature_fns = [
         feature_engine.compute_liquidity_growth_pct_1h,
         feature_engine.compute_price_momentum_zscore_1h,
@@ -221,16 +284,29 @@ async def compute_features(engine, redis_client, chain_id: int) -> int:
         feature_engine.compute_honeypot_detected_score,
         feature_engine.compute_liquidity_usd_delta_1h,
     ]
-    now = _clock()
     async with AsyncSession(engine, expire_on_commit=False) as session:
         pairs, _ = await entity_repositories.list_pairs(session, chain_id=chain_id)
         for pair in pairs:
             entity_id = pair.canonical_id
-            for fn in feature_fns:
-                feat = await fn(session, entity_id, chain_id, now, now)
-                if feat is not None:
-                    await ts_repos.save_feature(session, feat)
-                    created += 1
+            # Distinct historical snapshot timestamps for this pair (the
+            # as_of anchors — one epoch per snapshot, deterministic order).
+            snapshots = await ts_repos.list_snapshots(
+                session,
+                entity_id,
+                datetime(2000, 1, 1, tzinfo=UTC),
+                datetime(2100, 1, 1, tzinfo=UTC),
+            )
+            anchors = sorted({s.snapshot_timestamp for s in snapshots})
+            if not anchors:
+                # No historical data — compute once at a synthetic recent as_of
+                # so bar/snapshot-based features still attempt work.
+                anchors = [datetime.now(UTC)]
+            for as_of in anchors:
+                for fn in feature_fns:
+                    feat = await fn(session, entity_id, chain_id, as_of, as_of)
+                    if feat is not None:
+                        await ts_repos.save_feature(session, feat)
+                        created += 1
     return created
 
 
@@ -247,11 +323,16 @@ async def post_process(
         BarInterval.ONE_HOUR,
     ),
     offsets_min: tuple[int, ...] = (5, 10, 30, 60, 360, 1440),
+    eth_price_usd: Decimal = _DEFAULT_ETH_USD,
 ) -> dict:
     dsn = os.environ.get("POSTGRES_DSN", _DEFAULT_DSN)
     redis_url = os.environ.get("REDIS_URL", _DEFAULT_REDIS)
     engine = create_async_engine(dsn)
     r = redis.from_url(redis_url)
+    # Bug 1 fix: a deterministic multi-source oracle resolves liquidity_usd for
+    # USDC/stablecoin (STATIC) and WETH (configurable CHAINLINK ETH price);
+    # exotic pools get NULL (honest).
+    oracle = MultiPriceOracle(r, eth_price_provider=_StaticEthPriceProvider(eth_price_usd))
     report: dict = {}
     try:
         print("[post-process] 1/5 rebuilding state projections...")
@@ -261,11 +342,11 @@ async def post_process(
         bars = await backfill_market_bars(engine, r, chain_id, intervals)
         report["bars_written"] = bars
 
-        print("[post-process] 3/5 generating historical snapshots...")
-        snaps = await backfill_historical_snapshots(engine, r, chain_id, offsets_min)
+        print("[post-process] 3/5 generating historical snapshots (with oracle)...")
+        snaps = await backfill_historical_snapshots(engine, r, chain_id, offsets_min, oracle=oracle)
         report["snapshots_written"] = snaps
 
-        print("[post-process] 4/5 computing features...")
+        print("[post-process] 4/5 computing features (historical as_of alignment)...")
         feats = await compute_features(engine, r, chain_id)
         report["features_written"] = feats
 
@@ -282,8 +363,14 @@ async def post_process(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Post-process analytics after cohort ingestion.")
     parser.add_argument("--chain", type=int, default=8453)
+    parser.add_argument(
+        "--eth-price",
+        type=Decimal,
+        default=_DEFAULT_ETH_USD,
+        help="ETH/USD price for WETH liquidity_usd (default 3500)",
+    )
     args = parser.parse_args()
-    out = asyncio.run(post_process(chain_id=args.chain))
+    out = asyncio.run(post_process(chain_id=args.chain, eth_price_usd=args.eth_price))
     for k, v in out.items():
         print(f"  {k}: {v}")
     print("\nDone. Re-run to confirm idempotency (no duplicate rows).")

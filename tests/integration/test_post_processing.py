@@ -39,7 +39,8 @@ CHAIN_ID = 8453
 # shared entity (0x39f0...) used by test_observation_snapshots / others.
 POOL = "0x6969696969696969696969696969696969696969"
 TOKEN0 = "0x4200000000000000000000000000000000000006"
-TOKEN1 = "0x833589FCdbe0E8C5a3c3f0e0b2F5b5a5A5A5a5a5"
+# Real USDC address on Base (recognized by pool_classifier._STABLECOIN_ADDRESSES).
+TOKEN1 = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
 PAIR_ID = compute_pair_id(CHAIN_ID, POOL)
 CREATED = datetime(2024, 4, 22, 12, 0, 0, tzinfo=UTC)
 
@@ -281,3 +282,115 @@ async def test_backfill_historical_snapshots_pit_and_idempotent(pg_engine: Async
     assert snap_1h_reserve0 == Decimal("1001000")
     # The +2h swap (amount0_in=1000) is excluded → still 1001000, not 1002000.
     assert snap_1h_reserve0 == Decimal("1001000")
+
+
+async def test_snapshot_backfill_populates_liquidity_usd_via_oracle(
+    pg_engine: AsyncEngine,
+) -> None:
+    """Bug 1: a USDC-quote pool's historical snapshot gets liquidity_usd from
+    the multi-source oracle (STATIC $1.0), with provenance + confidence and a
+    non-null quote_token_type."""
+    from onchain_platform.domain.schemas.blockchain_fact import BlockchainFact, SwapExecutedPayload
+    from scripts.post_process_analytics import backfill_historical_snapshots
+
+    await _clean(pg_engine)
+    # The pair's quote token is the real USDC address (module TOKEN1), so
+    # classify_pool returns a USDC (stablecoin) quote → the oracle resolves a
+    # STATIC $1.0 USD price and the snapshot gets liquidity_usd. A swap gives
+    # it reserves to price.
+    usdc_pair = "0x6969696969696969696969696969696969696969"
+    usdc_entity = pair_canonical_id(CHAIN_ID, usdc_pair)
+    liq = BlockchainFact(
+        schema_version="1.0",
+        fact_id=f"{CHAIN_ID}:0x{700:064x}:0",
+        chain_id=CHAIN_ID,
+        fact_type=FactType.SWAP_EXECUTED,
+        block_number=700,
+        block_hash=f"0x{700:064x}",
+        tx_hash=f"0x{700:064x}",
+        log_index=0,
+        event_time=CREATED,
+        observed_at=CREATED,
+        ingested_at=CREATED,
+        confirmation_status=ConfirmationStatus.FINALIZED,
+        confirmations=10,
+        payload=SwapExecutedPayload(
+            fact_type="SWAP_EXECUTED",
+            pool_address=usdc_pair,
+            sender="0x" + "11" * 20,
+            recipient="0x" + "22" * 20,
+            amount0_in="0",
+            amount1_in="5000000000",  # quote reserve = 5000 USDC
+            amount0_out="0",
+            amount1_out="0",
+        ),
+    )
+    await _seed_pair_and_facts(pg_engine, [liq])
+
+    # Build a deterministic oracle (STATIC for USDC).
+    import redis.asyncio as redis
+
+    from onchain_platform.acquisition.providers.multi_price_oracle import MultiPriceOracle
+
+    r = redis.from_url("redis://localhost:6379/0")
+    oracle = MultiPriceOracle(r, eth_price_provider=None)
+    try:
+        n = await backfill_historical_snapshots(pg_engine, None, CHAIN_ID, (60,), oracle=oracle)
+    finally:
+        await r.aclose()
+    assert n >= 1
+
+    async with AsyncSession(pg_engine, expire_on_commit=False) as session:
+        from onchain_platform.persistence.timescale import repositories as ts
+
+        snaps = await ts.list_snapshots(
+            session,
+            usdc_entity,
+            CREATED - timedelta(minutes=1),
+            CREATED + timedelta(hours=1, minutes=1),
+        )
+    snap = next(s for s in snaps if s.snapshot_timestamp == CREATED + timedelta(hours=1))
+    assert snap.liquidity_usd is not None
+    assert snap.quote_token_type is not None
+    assert Decimal(snap.liquidity_usd) > 0
+
+
+async def test_compute_features_uses_historical_as_of(
+    pg_engine: AsyncEngine,
+) -> None:
+    """Bug 2: features are computed at each historical snapshot timestamp
+    (as_of = snapshot_ts), so the [as_of-1h, as_of] window sees real data and
+    the feature is NOT the value=0 'now()' fallback."""
+    from scripts.post_process_analytics import compute_features
+
+    await _clean(pg_engine)
+    # Two swaps 5 minutes apart give the momentum feature real returns at a
+    # snapshot 1h after creation (which includes both).
+    facts = [
+        _swap_fact(200, 0, CREATED, amount0_in="1000", amount1_out="2000"),
+        _swap_fact(201, 0, CREATED + timedelta(minutes=5), amount0_in="1000", amount1_out="3000"),
+    ]
+    await _seed_pair_and_facts(pg_engine, facts)
+
+    # First, create historical snapshots (so there is an as_of anchor).
+    from scripts.post_process_analytics import backfill_historical_snapshots
+
+    await backfill_historical_snapshots(pg_engine, None, CHAIN_ID, (5, 60))
+
+    created = await compute_features(pg_engine, None, CHAIN_ID)
+    assert created > 0
+
+    async with AsyncSession(pg_engine, expire_on_commit=False) as session:
+        from onchain_platform.persistence.timescale import repositories as ts
+
+        feats = await ts.list_features(
+            session,
+            PAIR_ID,
+            "liquidity_growth_pct_1h",
+            CREATED - timedelta(minutes=1),
+            CREATED + timedelta(hours=1, minutes=1),
+        )
+    # liquidity_growth_pct_1h needs 2 snapshots in [as_of-1h, as_of]; at
+    # as_of = 13:00 (created+60m) the window [12:00,13:00] holds both the
+    # 12:05 and 13:00 snapshots → the feature computes at a HISTORICAL as_of.
+    assert any(f.as_of_timestamp <= CREATED + timedelta(hours=1) for f in feats), feats
