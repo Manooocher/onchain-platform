@@ -36,6 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from onchain_platform.domain.exceptions import PersistenceError
+from onchain_platform.domain.money import decimal_to_plain_string
 from onchain_platform.domain.schemas.enums import BarInterval
 from onchain_platform.domain.schemas.feature import Feature
 from onchain_platform.domain.schemas.market_bar import MarketBar
@@ -142,16 +143,16 @@ def _row_to_bar(row: MarketBarRow) -> MarketBar:
         interval=BarInterval(row.interval),
         bar_start_time=_ensure_utc(row.bar_start_time),
         bar_end_time=_ensure_utc(row.bar_end_time),
-        open=str(row.open),
-        high=str(row.high),
-        low=str(row.low),
-        close=str(row.close),
-        volume_base=str(row.volume_base),
-        volume_quote=str(row.volume_quote),
+        open=decimal_to_plain_string(row.open),
+        high=decimal_to_plain_string(row.high),
+        low=decimal_to_plain_string(row.low),
+        close=decimal_to_plain_string(row.close),
+        volume_base=decimal_to_plain_string(row.volume_base),
+        volume_quote=decimal_to_plain_string(row.volume_quote),
         trade_count=row.trade_count,
-        vwap=str(row.vwap),
-        buy_volume=str(row.buy_volume),
-        sell_volume=str(row.sell_volume),
+        vwap=decimal_to_plain_string(row.vwap),
+        buy_volume=decimal_to_plain_string(row.buy_volume),
+        sell_volume=decimal_to_plain_string(row.sell_volume),
         source_fact_range=(row.source_fact_range_start, row.source_fact_range_end),
         is_provisional=row.is_provisional,
         computed_at=_ensure_utc(row.computed_at),
@@ -305,10 +306,12 @@ def _row_to_snapshot(row: ObservationSnapshotRow) -> ObservationSnapshot:
         ingested_at=_ensure_utc(row.ingested_at),
         source=row.source,
         snapshot_version=row.snapshot_version,
-        reserve0=str(row.reserve0),
-        reserve1=str(row.reserve1),
-        price=str(row.price),
-        liquidity_usd=str(row.liquidity_usd) if row.liquidity_usd is not None else None,
+        reserve0=decimal_to_plain_string(row.reserve0),
+        reserve1=decimal_to_plain_string(row.reserve1),
+        price=decimal_to_plain_string(row.price),
+        liquidity_usd=decimal_to_plain_string(row.liquidity_usd)
+        if row.liquidity_usd is not None
+        else None,
         liquidity_usd_source=row.liquidity_usd_source,
         liquidity_usd_confidence=(
             float(row.liquidity_usd_confidence)
@@ -317,8 +320,10 @@ def _row_to_snapshot(row: ObservationSnapshotRow) -> ObservationSnapshot:
         ),
         quote_token_type=row.quote_token_type,
         holder_count=row.holder_count,
-        market_cap_usd=str(row.market_cap_usd) if row.market_cap_usd is not None else None,
-        fdv_usd=str(row.fdv_usd) if row.fdv_usd is not None else None,
+        market_cap_usd=decimal_to_plain_string(row.market_cap_usd)
+        if row.market_cap_usd is not None
+        else None,
+        fdv_usd=decimal_to_plain_string(row.fdv_usd) if row.fdv_usd is not None else None,
     )
 
 

@@ -32,6 +32,7 @@ from onchain_platform.domain.interfaces.price_oracle import (
     PoolClassification,
     PriceResult,
 )
+from onchain_platform.domain.money import decimal_to_plain_string
 from onchain_platform.domain.schemas.enums import QuoteTokenType
 from onchain_platform.domain.schemas.observation_snapshot import ObservationSnapshot
 from onchain_platform.persistence.postgres import entity_repositories
@@ -82,7 +83,7 @@ def compute_liquidity_usd(
         r1 = Decimal(reserve1)
     except Exception:  # malformed reserve string
         return None
-    return str(r0 * price0 + r1 * price1)
+    return decimal_to_plain_string(r0 * price0 + r1 * price1)
 
 
 def liquidity_usd_for_quote(
@@ -120,7 +121,7 @@ def liquidity_usd_for_quote(
     except decimal.InvalidOperation:
         return (None, None, 0.0)
 
-    return str(usd), quote_result.source.value, quote_result.confidence
+    return decimal_to_plain_string(usd), quote_result.source.value, quote_result.confidence
 
 
 def _reserve_for_quote(reserves: tuple[str, str], pool_class: PoolClassification) -> str | None:

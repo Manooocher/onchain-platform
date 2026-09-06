@@ -35,6 +35,7 @@ from decimal import Decimal, getcontext
 
 import structlog
 
+from onchain_platform.domain.money import decimal_to_plain_string
 from onchain_platform.domain.schemas.blockchain_fact import (
     BlockchainFact,
     SwapExecutedPayload,
@@ -163,16 +164,16 @@ def aggregate_swaps_to_bar(
         chain_id=chain_id,
         interval=interval,
         bar_start_time=bar_start,
-        open_=str(open_price),
-        high=str(high_price),
-        low=str(low_price),
-        close=str(close_price),
-        volume_base=str(volume_base),
-        volume_quote=str(volume_quote),
+        open_=decimal_to_plain_string(open_price),
+        high=decimal_to_plain_string(high_price),
+        low=decimal_to_plain_string(low_price),
+        close=decimal_to_plain_string(close_price),
+        volume_base=decimal_to_plain_string(volume_base),
+        volume_quote=decimal_to_plain_string(volume_quote),
         trade_count=len(sorted_facts),
-        vwap=str(vwap),
-        buy_volume=str(buy_volume),
-        sell_volume=str(sell_volume),
+        vwap=decimal_to_plain_string(vwap),
+        buy_volume=decimal_to_plain_string(buy_volume),
+        sell_volume=decimal_to_plain_string(sell_volume),
         source_fact_range=source_fact_range,
         is_provisional=False,  # M3: FINALIZED only
         computed_at=computed_at,

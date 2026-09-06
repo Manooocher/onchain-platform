@@ -292,3 +292,96 @@ async def test_pair_created_does_not_update_projection(mock_deps: MockDeps) -> N
 
     await update_projection(AsyncMock(), redis_mock, fact, lambda: PINNED)
     redis_mock.set.assert_not_called()
+
+
+def test_projection_never_serializes_reserves_scientific_notation() -> None:
+    """Bug 1 regression: reserves > 1e18 must persist as integer strings, not
+    scientific notation (e.g. '1.7902901E+19'), so StateProjection's isdigit
+    validator and downstream ObservationSnapshot never choke. Uses a swap that
+    pushes reserves far past 1e18."""
+    from onchain_platform.domain.money import decimal_to_plain_string
+
+    # Largest uint256-scale reserves the pool could plausibly hold.
+    r0 = Decimal("17902901000000000000")  # ~1.79e19
+    r1 = Decimal("100000000000000000000")  # 1e20
+
+    as_str0 = decimal_to_plain_string(r0)
+    as_str1 = decimal_to_plain_string(r1)
+
+    # Must be plain integer strings (no 'E', no '.'), and must pass the schema
+    # validators exactly as update_projection's StateProjection would.
+    assert "E" not in as_str0 and "E" not in as_str1
+    assert as_str0.isdigit() and as_str1.isdigit()
+    StateProjection(
+        entity_id=f"eip155:{CHAIN_ID}/pair:{POOL}",
+        chain_id=CHAIN_ID,
+        as_of_block=1,
+        as_of_fact_id="x",
+        computed_at=PINNED,
+        reserve0=as_str0,
+        reserve1=as_str1,
+        price="2",
+    )
+
+
+async def test_update_projection_big_reserves_serialize_as_plain_strings(
+    mock_deps: MockDeps,
+) -> None:
+    """Bug 1 end-to-end: update_projection with large reserves writes a
+    StateProjection whose reserve0/reserve1 are integer strings (no exponent)
+    that survive StateProjection.model_validate round-trip."""
+    redis_mock, session_mock, pair_mock = mock_deps
+
+    initial = StateProjection(
+        entity_id=f"eip155:{CHAIN_ID}/pair:{POOL}",
+        chain_id=CHAIN_ID,
+        as_of_block=1,
+        as_of_fact_id="old",
+        computed_at=PINNED,
+        reserve0="17900000000000000000",
+        reserve1="17900000000000000000",
+        price="1",
+    )
+    redis_mock.get = AsyncMock(return_value=initial.model_dump_json().encode())
+
+    import onchain_platform.persistence.postgres.entity_repositories as entity_repos
+
+    original = entity_repos.get_trading_pair
+    entity_repos.get_trading_pair = AsyncMock(return_value=pair_mock)
+    try:
+        # Swap adding a large amount to reserve0: 179e18 + 1000.
+        fact = BlockchainFact(
+            schema_version="1.0",
+            fact_id=f"{CHAIN_ID}:0x{'cc' * 32}:0",
+            chain_id=CHAIN_ID,
+            fact_type=FactType.SWAP_EXECUTED,
+            block_number=200,
+            block_hash=f"0x{'bb' * 32}",
+            tx_hash=f"0x{'cc' * 32}",
+            log_index=0,
+            event_time=PINNED,
+            observed_at=PINNED,
+            ingested_at=PINNED,
+            confirmation_status=ConfirmationStatus.FINALIZED,
+            confirmations=10,
+            payload=SwapExecutedPayload(
+                fact_type="SWAP_EXECUTED",
+                pool_address=POOL,
+                sender=TOKEN0,
+                recipient=TOKEN1,
+                amount0_in="1000",
+                amount1_in="0",
+                amount0_out="0",
+                amount1_out="0",
+            ),
+        )
+        await update_projection(session_mock, redis_mock, fact, lambda: PINNED)
+    finally:
+        entity_repos.get_trading_pair = original
+
+    # The saved JSON must carry integer string reserves (no scientific).
+    written = redis_mock.set.call_args.args[1]
+    assert isinstance(written, str)
+    assert "E+" not in written and "E-" not in written
+    # Round-trips through the schema (proves the isdigit validator is happy).
+    StateProjection.model_validate_json(written)

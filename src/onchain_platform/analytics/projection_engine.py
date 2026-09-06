@@ -22,6 +22,7 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from onchain_platform.domain.ids import pair_canonical_id
+from onchain_platform.domain.money import decimal_to_plain_string
 from onchain_platform.domain.schemas.blockchain_fact import (
     BlockchainFact,
     LiquidityAddedPayload,
@@ -68,11 +69,12 @@ async def _get_token_ordering(
 def _compute_price(reserve0: Decimal, reserve1: Decimal) -> str:
     """Price = reserve1 / reserve0 (token1 per token0, DOC-012 § B.2).
 
-    Returns Decimal-as-string. If reserve0 is 0, price is "0" (defensive).
+    Returns Decimal-as-string via the plain (non-scientific) formatter. If
+    reserve0 is 0, price is "0" (defensive).
     """
     if reserve0 == 0:
         return "0"
-    return str(reserve1 / reserve0)
+    return decimal_to_plain_string(reserve1 / reserve0)
 
 
 async def update_projection(
@@ -152,8 +154,8 @@ async def update_projection(
             "projection_negative_reserves",
             chain_id=fact.chain_id,
             pool_address=pool_address,
-            reserve0=str(r0),
-            reserve1=str(r1),
+            reserve0=decimal_to_plain_string(r0),
+            reserve1=decimal_to_plain_string(r1),
             fact_id=fact.fact_id,
         )
         r0 = max(r0, Decimal(0))
@@ -165,8 +167,8 @@ async def update_projection(
         as_of_block=fact.block_number,
         as_of_fact_id=fact.fact_id,
         computed_at=clock(),
-        reserve0=str(r0),
-        reserve1=str(r1),
+        reserve0=decimal_to_plain_string(r0),
+        reserve1=decimal_to_plain_string(r1),
         price=_compute_price(r0, r1),
     )
 
@@ -176,8 +178,8 @@ async def update_projection(
         chain_id=fact.chain_id,
         pool_address=pool_address,
         as_of_block=fact.block_number,
-        reserve0=str(r0),
-        reserve1=str(r1),
+        reserve0=decimal_to_plain_string(r0),
+        reserve1=decimal_to_plain_string(r1),
         price=updated.price,
     )
 
