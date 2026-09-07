@@ -131,7 +131,11 @@ Blockchain Events → Facts → State Projections → Snapshots → Features →
    ```bash
    cp .env.example .env
    # Edit .env with your configuration
+
+   source $HOME/.local/bin/env
+   export $(grep -v '^#' .env | xargs)
    ```
+
 
 4. **Start infrastructure** (TimescaleDB on `:5433`, Redis on `:6379`)
    ```bash
