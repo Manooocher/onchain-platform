@@ -1,65 +1,65 @@
-# ML Foundation — Initial Models
+# ML Models — Phase 4
 
-> **Honest scope note:** these are the model *candidates* and their evaluation templates. With the current cohort (~8 durable pairs), any numeric result is a **pipeline smoke number**, not validated model capability. The target metrics below are stated as goals and explicitly caveated; a result that does not meet them with this data is an honest outcome, not a failure of the plan.
+## Status: REORIENTED (2026-09-06)
 
-## Shared Inputs
+Original plan had Rug Pull Predictor as Model 1.
+Deep data audit revealed ZERO positive RUG_PULL samples in current cohort.
+Plan revised to focus on models with sufficient data.
 
-- **Features (5):** `liquidity_growth_pct_1h`, `price_momentum_zscore_1h`, `volume_quote_delta_1h`, `honeypot_detected_score`, `liquidity_usd_delta_1h`
-- **Labels:** Outcome types RUG_PULL / SUCCESSFUL_LAUNCH / DEAD_TOKEN × observation windows (1h, 24h), versioned `label_definition` / `label_definition_version`
-- **Splits:** strictly time-based, grouped by `entity_id`; scalers fit on train only
-- **Confidence filter:** drop rows with `liquidity_usd_confidence < 0.5` before training
-- **Tracking:** every run in MLflow with a `live` registry pointer
+## Model 1: Successful Launch Predictor ✅ ACTIVE
 
-## Model Cards
+- **Status**: Ready for training
+- **Target**: AUC-ROC ≥ 0.70
+- **Algorithm**: XGBoost (scikit-learn wrapper)
+- **Target Variable**: outcome_type='SUCCESSFUL_LAUNCH', window='24h', label_value
+- **Positive Samples**: ~38 (37%)
+- **Negative Samples**: ~62 (63%)
+- **Features**:
+  - liquidity_growth_pct_1h (requires liquidity_usd)
+  - price_momentum_zscore_1h
+  - volume_quote_delta_1h
+- **Dataset**: 100 pairs with outcomes
+- **Split**: Time-based (train: first 70%, test: last 30%)
+- **Preprocessing**: RobustScaler, log1p for volume, median imputation
+- **Explainability**: SHAP values + feature importance
 
----
+## Model 2: Dead Token Predictor ✅ ACTIVE
 
-### Model 1: Rug Pull Predictor
+- **Status**: Ready for training
+- **Target**: AUC-ROC ≥ 0.70
+- **Algorithm**: XGBoost
+- **Target Variable**: outcome_type='DEAD_TOKEN', window='24h', label_value
+- **Positive Samples**: ~52 (52%)
+- **Negative Samples**: ~48 (48%)
+- **Features**: Same as Model 1
+- **Dataset**: 100 pairs with outcomes
+- **Split**: Time-based
+- **Note**: Best class balance of all three models
 
-| Field | Value |
-|-------|-------|
-| **Task** | Binary classification |
-| **Label** | `RUG_PULL` outcome (`label_value`), window 1h **or** 24h (choose per run based on which has measurable positive class) |
-| **Features** | All 5 |
-| **Algorithms** | LogisticRegression, RandomForest, XGBClassifier |
-| **Target metric** | AUC-ROC ≥ 0.75 ⚠️ *likely not achievable with ~8 durable pairs — treat as pipeline smoke* |
-| **Baseline** | Random classifier + rule heuristic (e.g. `liquidity_growth_pct_1h` / `liquidity_usd_delta_1h` threshold) |
-| **Use case** | Flag high-risk newly-launched pairs for research follow-up (never trade execution) |
-| **Limitations** | Sparse positive class unknown; honeypot insight is already a strong rule signal — the model must beat it, not just rediscover it |
-| **Data version** | feature set v1 (5 features); label definition version per run |
-| **label_definition_version** | `outcome_rules.OUTCOME_RULES_VERSION` (= "1.0") at label time |
+## Model 3: Rug Pull Predictor 🔴 DEFERRED
 
----
+- **Status**: BLOCKED — Zero positive samples
+- **Original Target**: AUC-ROC ≥ 0.75
+- **Root Cause**: 11-hour random window (blocks 50.4M-50.55M) had no rug events
+- **Unblocked By**:
+  1. Expanding block range to 500K-1M blocks
+  2. OR finding a period with known rug activity
+- **Estimated Data Need**: ≥100 confirmed rug events
+- **Workaround**: NONE — do not fabricate labels
+- **Interim Alternative**: Anomaly detection on reserve drops (future work)
 
-### Model 2: Liquidity Forecaster
+## Model 4: Liquidity Forecaster ⚠️ AT RISK
 
-| Field | Value |
-|-------|-------|
-| **Task** | Regression |
-| **Target** | `liquidity_usd` at T+24h (from snapshot history) |
-| **Features** | All 5 (esp. `liquidity_usd_delta_1h`, `liquidity_growth_pct_1h`) |
-| **Algorithms** | Ridge/Lasso, GradientBoostingRegressor, XGBRegressor |
-| **Target metric** | MAE ≤ 20% of mean `liquidity_usd` ⚠️ *with tiny data, MAE will be dominated by a few rows — report honestly* |
-| **Baseline** | Mean-value regressor + naive "carry forward last liquidity" heuristic |
-| **Use case** | Project liquidity persistence for newly-launched pair screening |
-| **Limitations** | Only priced (non-exotic) pools have `liquidity_usd`; confidence < 0.5 rows dropped; few labeled T+24h targets exist |
-| **Data version** | feature set v1 (5 features) |
-| **label_definition_version** | n/a (no label; supervised by future snapshot) |
+- **Status**: LIMITED DATA
+- **Target**: MAE ≤ 20%
+- **Constraint**: Only ~47 pairs have liquidity_usd (74% lack it)
+- **Recommendation**: DEFER until feature expansion provides alternatives
+- **Alternative**: Predict liquidity_usd from reserve0/reserve1 + token metadata
 
----
+## Data Quality Notes
 
-### Model 3: Momentum Ranker
-
-| Field | Value |
-|-------|-------|
-| **Task** | Ranking |
-| **Target** | `price_momentum_zscore_1h` ordering (predict which pair has higher momentum) |
-| **Features** | All 5 (esp. `volume_quote_delta_1h`, `price_momentum_zscore_1h`) |
-| **Algorithms** | scalar-score ranking (LTR-style, or pairwise scorer via sklearn) |
-| **Target metric** | NDCG@10 ≥ 0.6, MRR ⚠️ *with a handful of pairs, NDCG is noisy* |
-| **Baseline** | Random order + "sort by current momentum" heuristic |
-| **Use case** | Order research attention across candidate pairs |
-| **Limitations** | Ranking quality bounded by pair count; fixture-only validation for now |
-| **Data version** | feature set v1 (5 features) |
-
----
+- Zero-leakage dataset builder: analytics/dataset_builder.py
+- Volume normalization: divided by quote token decimals (fixed in 0bc893b)
+- Oracle: MultiPriceOracle with StaticEthPriceProvider for WETH
+  (src/onchain_platform/intelligence/oracles.py)
+- Exotic pairs: 74% lack liquidity_usd — documented limitation

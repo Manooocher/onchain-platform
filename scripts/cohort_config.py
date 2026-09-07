@@ -15,15 +15,14 @@ scripts/ingestion_state.json (gitignored).
 
 COHORT_RANGE = {
     "chain_id": 8453,
-    # Density probe (scripts/probe_pair_density.py) found 437 PairCreated
-    # events across 50_400_000..50_549_999 — a high pair-creation window well
-    # above the ~200-pair cohort target. Blocks are comfortably older than 24h
-    # relative to the live head, so every ingested pair gets a closed 1h/24h
-    # observation window.
-    "start_block": 50_400_000,
+    # Phase-1 audit (2026-09-06) found ZERO RUG_PULL positives in the original
+    # 50.4M..50.5499M window. To find rug events and grow the cohort, EXPAND
+    # ~1M blocks back (49_500_000..50_549_999). **PREPARED but NOT RUN** — the
+    # user decides when to execute the expansion on the VPS.
+    "start_block": 49_500_000,
     "end_block": 50_549_999,
-    # 100-block chunks keep each invocation well within the ~4.7 min sandbox
-    # long-lived-process limit (real collector throughput ~1.1 s/block).
-    "chunk_size": 100,
-    "reason": "probe-verified high pair-creation density (437 PairCreated in range)",
+    # 1000-block chunks are safe on a stable VPS (no ~4.7-min kill), so
+    # throughput improves; the ingestion_state.json resume logic is unchanged.
+    "chunk_size": 1000,
+    "reason": "expand ~1M blocks to find genuine RUG_PULL events (prepared, not run)",
 }

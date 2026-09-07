@@ -50,6 +50,7 @@ from onchain_platform.domain.schemas.blockchain_fact import (
 )
 from onchain_platform.domain.schemas.enums import BarInterval, FactType
 from onchain_platform.domain.schemas.observation_snapshot import ObservationSnapshot
+from onchain_platform.intelligence.oracles import StaticEthPriceProvider
 from onchain_platform.persistence.postgres import (
     entity_repositories,
 )
@@ -66,19 +67,6 @@ _DEFAULT_REDIS = "redis://localhost:6379/0"
 # while remaining deterministic. Documented limitation — swap for a real feed
 # in production.
 _DEFAULT_ETH_USD = Decimal(os.environ.get("ETH_USD_PRICE", "3500"))
-
-
-class _StaticEthPriceProvider:
-    """Deterministic ETH/usd price provider for the MultiPriceOracle (WETH).
-
-    Returns the configured constant. No I/O — satisfies DOC-013 determinism.
-    """
-
-    def __init__(self, price_usd: Decimal) -> None:
-        self._price = price_usd
-
-    async def __call__(self) -> Decimal:
-        return self._price
 
 
 def _clock() -> datetime:
@@ -332,7 +320,7 @@ async def post_process(
     # Bug 1 fix: a deterministic multi-source oracle resolves liquidity_usd for
     # USDC/stablecoin (STATIC) and WETH (configurable CHAINLINK ETH price);
     # exotic pools get NULL (honest).
-    oracle = MultiPriceOracle(r, eth_price_provider=_StaticEthPriceProvider(eth_price_usd))
+    oracle = MultiPriceOracle(r, eth_price_provider=StaticEthPriceProvider(eth_price_usd))
     report: dict = {}
     try:
         print("[post-process] 1/5 rebuilding state projections...")

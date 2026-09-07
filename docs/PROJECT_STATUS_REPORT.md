@@ -512,3 +512,49 @@ These rules are non-negotiable. Violating any of them is a critical failure.
 | No `set` iteration on aggregation paths | code review + ruff ASYNC rules | DOC-013 |
 | Polars runs multi-threaded (default) | never set `POLARS_MAX_THREADS=1` | DOC-013 |
 | `inputs` list on Feature must be non-empty | Pydantic `min_length=1` validator | DOC-012 § Traceability Chain |
+
+---
+
+## ML Foundation Data Audit + Reorientation (2026-09-06)
+
+### Six bugs found and fixed (recent work)
+1. **Scientific-notation reserves (Bug 1)** — `str(Decimal)` emitted `1.79E+19`;
+   introduced `domain/money.py::decimal_to_plain_string()` and applied at every
+   monetary serialization boundary.
+2. **Market bars never wired (Bug 2)** — `aggregate_swaps_to_bar` had no
+   production caller; `scripts/post_process_analytics.py` backfills bars.
+3. **Missing historical snapshots (Bug 3)** — post-processing generates
+   PIT-correct snapshots at creation + offsets.
+4. **Oracle not wired (Bug 1, analytics)** — historical snapshots had all-NULL
+   `liquidity_usd`; the script now wires `MultiPriceOracle` +
+   `StaticEthPriceProvider` for USDC/WETH.
+5. **Feature time-alignment (Bug 2)** — features were computed at `now()`
+   instead of historical snapshot timestamps; `compute_features` now iterates
+   per-pair snapshot `as_of`.
+6. **Volume scale (Bug 3)** — `volume_quote_delta_1h` used raw token amounts
+   (~1e27); now divided by quote-token decimals.
+
+### RUG_PULL labeling audit (Phase 1)
+- **Conclusion: the RUG_PULL calculation is CORRECT (deterministic, PIT-correct)
+  but the cohort genuinely has zero rugs.** The engine uses the
+  `reserve0×reserve1` product ratio `(early-late)/early`, NOT the individual
+  `reserve0`/`reserve1` drops the initial manual query used. The absurd
+  `-6.9M%` values were individual-leg swings that are NOT what the rule
+  evaluates.
+- Thresholds not changed. Zero rugs over an 11-hour random window is a data
+  reality, not necessarily representative of Base chain — expansion is needed
+  to find rug events.
+- Diagnostic tool: `scripts/diagnose_dataset.py` (audit + near-miss + bar
+  coverage). Run on the VPS.
+
+### Model reorientation
+- Rug Pull Predictor: **DEFERRED** (zero positives). Reoriented to:
+  - Model 1 Successful Launch Predictor (ACTIVE)
+  - Model 2 Dead Token Predictor (ACTIVE)
+  - Model 3 Rug Pull Predictor (DEFERRED)
+  - Model 4 Liquidity Forecaster (AT RISK — 74% lack liquidity_usd)
+- See `docs/ML_MODELS.md`.
+
+### Quality gates (current HEAD)
+- `make lint`, `make typecheck`, `make import-check` (8/8), non-live test
+  suite, and `make test-replay` all pass.
