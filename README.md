@@ -118,7 +118,7 @@ Blockchain Events → Facts → State Projections → Snapshots → Features →
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/yourusername/onchain-platform.git
+   git clone https://github.com/Manooocher/onchain-platform.git
    cd onchain-platform
    ```
 
