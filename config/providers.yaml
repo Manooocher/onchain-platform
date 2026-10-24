@@ -36,7 +36,6 @@ base:
     api_key_env: "ROCKX_BASE_API_KEY"
     rate_limit_per_second: 25
     priority: 3
-    requires_ssl_no_revoke: true
   failover:
     strategy: "priority_with_health_check"
     health_check_interval_seconds: 30

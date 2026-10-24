@@ -29,15 +29,21 @@ cd onchain-platform
 # Install dependencies
 uv sync
 
-# Copy the environment template
-cp .env.example .env
+# Install the pre-commit secret-scanning gate (S0-1)
+uv run pre-commit install
 
-# Start infrastructure (TimescaleDB on :5433, Redis on :6379)
+# Copy the environment template, then fill in real values. The dev containers
+# require passwords (S0-3): set POSTGRES_PASSWORD and REDIS_PASSWORD, and embed
+# the same values inside POSTGRES_DSN and REDIS_URL.
+cp .env.example .env
+$EDITOR .env
+
+# Start infrastructure (TimescaleDB on 127.0.0.1:5433, Redis on 127.0.0.1:6379)
 docker compose up -d
 
 # Wait for readiness
 docker compose exec timescaledb pg_isready -U onchain -d onchain_platform
-docker compose exec redis redis-cli ping
+docker compose exec redis redis-cli -a "$(grep '^REDIS_PASSWORD=' .env | cut -d= -f2-)" --no-auth-warning ping
 
 # Apply migrations
 POSTGRES_DSN=$(grep POSTGRES_DSN .env | cut -d= -f2-) make migrate

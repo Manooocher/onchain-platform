@@ -33,10 +33,20 @@ def test_quiknode_subclasses_base_and_drops_ws() -> None:
     assert p._ws_url is None  # type: ignore[attr-defined]
 
 
-def test_rockx_disables_tls_verification() -> None:
-    p = RockXProvider("https://base.w3node.com/key/api")
-    assert isinstance(p, BlockchainProvider)
-    assert p._verify_tls is False  # type: ignore[attr-defined]
+def test_all_providers_verify_tls() -> None:
+    """No provider may disable TLS cert verification (SEC-2).
+
+    The shared base defaults `_verify_tls=True`; every concrete provider must
+    inherit it. A provider that overrides this to False re-opens SEC-2.
+    """
+    providers = [
+        AlchemyProvider("https://x/v2/key"),
+        QuickNodeProvider("https://q.example/"),
+        RockXProvider("https://base.w3node.com/key/api"),
+    ]
+    for p in providers:
+        assert isinstance(p, BlockchainProvider)
+        assert p._verify_tls is True  # type: ignore[attr-defined]
 
 
 def test_factory_maps_types() -> None:
