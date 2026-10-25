@@ -1,7 +1,7 @@
 # Makefile targets wrap the tools DOC-010 already commits to — nothing here
 # introduces a new decision (DOC-011 § Makefile).
 
-.PHONY: install lint typecheck test test-replay import-check run migrate
+.PHONY: install lint typecheck test test-unit test-integration test-replay import-check run migrate
 
 install:
 	uv sync
@@ -11,15 +11,24 @@ lint:
 	uv run ruff format --check .
 
 typecheck:
-	uv run mypy src/
+	uv run mypy src tests
 
-# Deliberately excludes tests/replay/ — bundling it in would make the everyday
-# inner-loop command slow enough that people stop running it (DOC-011).
+# Fast inner-loop default: the no-service unit category (tests/unit + schema).
 test:
-	uv run pytest tests/unit tests/integration tests/schema
+	uv run pytest -m unit
+
+# CI job commands (S0-10) — local `make` == CI exactly. Categories are applied
+# by marker in tests/conftest.py.
+test-unit:
+	uv run pytest -m unit
+
+# Integration + replay need Postgres/Redis up (docker compose up -d --wait);
+# live network tests are excluded.
+test-integration:
+	uv run pytest -m "(integration or replay) and not live"
 
 test-replay:
-	uv run pytest tests/replay
+	uv run pytest -m replay
 
 import-check:
 	uv run lint-imports

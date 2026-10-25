@@ -1,11 +1,10 @@
-# CI runs the three quality gates from commit 1 onward (ImplementationPlan §
-# Continuous Practices: "lint-imports runs in CI from Day 0's empty skeleton
-# onward", plus DOC-010 § Code Quality Gates — Ruff and mypy on every change).
+# CI gates (DOC-010 § Code Quality Gates; S0-10). Six parallel jobs, each
+# running a single Makefile target so local `make` == CI exactly:
+#   lint, typecheck, imports, unit (no services),
+#   integration (TimescaleDB + Redis via the repo docker-compose, pinned
+#   versions from S0-3), secret-scan (gitleaks over THIS PR's commits only).
 #
-# Integration/replay jobs need Postgres (timescale/timescaledb) and Redis
-# service containers; they are added in the follow-up that wires `make test`
-# against services (Milestone 1 build steps 16/25). The fast gates below need
-# no services.
+# Branch protection should require all six job names (see docs/implementation).
 
 name: ci
 
@@ -14,33 +13,109 @@ on:
     branches: [master]
   pull_request:
 
+# Cancel superseded runs of the same ref (S0-10).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  gates:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
+      - run: uv python install
+      - run: uv sync
+      - run: make lint
 
-      - name: Set up Python
-        run: uv python install
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv python install
+      - run: uv sync
+      - run: make typecheck
 
-      - name: Install dependencies
-        run: uv sync
+  imports:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv python install
+      - run: uv sync
+      - run: make import-check
 
-      - name: Ruff check
-        run: uv run ruff check .
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv python install
+      - run: uv sync
+      - run: make test-unit
 
-      - name: Ruff format check
-        run: uv run ruff format --check .
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv python install
+      - run: uv sync
+      - name: Generate ephemeral test credentials
+        # No secret-looking literals in the workflow; compose + conftest read
+        # these from the environment (scram password + requirepass + *_test).
+        run: |
+          PGPW=$(openssl rand -hex 16)
+          RDPW=$(openssl rand -hex 16)
+          {
+            echo "POSTGRES_PASSWORD=$PGPW"
+            echo "REDIS_PASSWORD=$RDPW"
+            echo "POSTGRES_DSN=postgresql+asyncpg://onchain:$PGPW@localhost:5433/onchain_platform"
+            echo "REDIS_URL=redis://:$RDPW@localhost:6379/0"
+          } >> "$GITHUB_ENV"
+      - name: Start services (pinned TimescaleDB + Redis)
+        run: docker compose up -d --wait
+      - name: Integration + replay tests
+        run: make test-integration
+      - name: Stop services
+        if: always()
+        run: docker compose down -v
 
-      - name: Mypy (strict)
-        run: uv run mypy src/ tests/
-
-      - name: Import-linter contracts (DOC-011)
-        run: uv run lint-imports
-
-      - name: Unit + schema tests
-        run: uv run pytest tests/unit tests/schema
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Gitleaks over this change's commits only
+        # Scans ONLY the commits introduced by this PR/push (base..head), never
+        # the full history: the already-exposed historical keys are kept live
+        # on purpose (docs/implementation/S0-Notes.md) and must not fail CI.
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+            HEAD="${{ github.event.pull_request.head.sha }}"
+          else
+            BASE="${{ github.event.before }}"
+            HEAD="${{ github.sha }}"
+          fi
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+            LOGOPTS="-1 $HEAD"
+          else
+            LOGOPTS="$BASE..$HEAD"
+          fi
+          echo "Scanning commit range: $LOGOPTS"
+          docker run --rm -v "$PWD:/repo" -w /repo zricethezav/gitleaks:v8.30.1 \
+            git --redact --no-banner --log-opts="$LOGOPTS"
