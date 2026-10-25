@@ -152,6 +152,12 @@ strict = true
 files = ["src", "tests"]
 plugins = ["pydantic.mypy"]
 
+# asyncpg ships no py.typed marker; used only by the test-DB provisioning in
+# tests/conftest.py (S0-5). Suppress the missing-stubs noise for that module.
+[[tool.mypy.overrides]]
+module = ["asyncpg"]
+ignore_missing_imports = true
+
 [tool.pydantic-mypy]
 init_forbid_extra = true
 init_typed = true
@@ -187,7 +193,13 @@ select = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+# live tests hit a real RPC endpoint — never run them by default (S0-6).
+addopts = "-m 'not live'"
 markers = [
+    # Categories are auto-applied by directory in tests/conftest.py (S0-6).
+    "unit: no I/O — runs with no services (tests/unit, tests/schema)",
+    "integration: requires Postgres and/or Redis (tests/integration)",
+    "replay: fixture replay tests (tests/replay)",
     # Network-dependent smoke tests against a real RPC endpoint. Never gate CI.
     "live: tests that require network access to a real RPC provider",
 ]

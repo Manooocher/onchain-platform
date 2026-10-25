@@ -14,6 +14,7 @@ Naming: test_<unit>_<scenario>_<expected_outcome> (DOC-013 § Testing
 Conventions).
 """
 
+import os
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -332,7 +333,7 @@ async def test_snapshot_backfill_populates_liquidity_usd_via_oracle(
 
     from onchain_platform.acquisition.providers.multi_price_oracle import MultiPriceOracle
 
-    r = redis.from_url("redis://localhost:6379/0")
+    r = redis.from_url(os.environ["REDIS_URL"])
     oracle = MultiPriceOracle(r, eth_price_provider=None)
     try:
         n = await backfill_historical_snapshots(pg_engine, None, CHAIN_ID, (60,), oracle=oracle)

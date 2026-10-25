@@ -8,6 +8,7 @@ All reserve/price fields are Decimal-as-string, zero-tolerance (DOC-008 §
 Financial Precision).
 """
 
+import os
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -39,7 +40,7 @@ POOL = "0x39f0E675D479088DE08b7f201Ac08e20F899B838"
 TOKEN0 = "0x4200000000000000000000000000000000000006"
 TOKEN1 = "0x833589FCdbe0E8C5a3c3f0e0b2F5b5a5A5A5a5a5"
 PINNED = datetime(2026, 8, 20, 12, 0, 0, tzinfo=UTC)
-REDIS_URL = "redis://localhost:6379/0"
+REDIS_URL = os.environ["REDIS_URL"]
 
 
 @pytest.fixture

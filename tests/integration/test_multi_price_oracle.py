@@ -1,5 +1,6 @@
 """Unit tests: multi-source price oracle with confidence (TD-1, Phase 2)."""
 
+import os
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -23,7 +24,7 @@ TOKEN1 = "0x2222"
 
 @pytest.fixture
 def redis_client() -> redis.Redis:
-    return redis.from_url("redis://localhost:6379/0")
+    return redis.from_url(os.environ["REDIS_URL"])
 
 
 def _cls(quote: QuoteTokenType) -> PoolClassification:
