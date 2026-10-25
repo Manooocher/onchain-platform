@@ -6,6 +6,7 @@ Verifies run_snapshot_creation:
 - populates liquidity_usd from a price oracle (Decimal math) when one is given.
 """
 
+import os
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -24,7 +25,7 @@ from onchain_platform.persistence.timescale import repositories as ts_repos
 from onchain_platform.transport import state_cache
 
 CHAIN_ID = 8453
-REDIS_URL = "redis://localhost:6379/0"
+REDIS_URL = os.environ["REDIS_URL"]
 PINNED = datetime(2026, 8, 22, 12, 0, 0, tzinfo=UTC)
 TOK0 = to_checksum_address("0x4200000000000000000000000000000000000006")
 TOK1 = to_checksum_address("0x" + "3c" * 20)

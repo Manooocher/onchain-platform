@@ -90,7 +90,7 @@ async def test_replay_reorg_marks_divergent_facts_orphaned(
     }
 
     # Provider that serves both blocks and logs.
-    from tests.unit.test_finality_engine import FakeProvider
+    from tests.integration.test_finality_engine import FakeProvider
 
     class LogAwareProvider(FakeProvider):
         def __init__(self, blocks: list[BlockMetadata], logs: dict[int, list[RawLog]]) -> None:
