@@ -4,10 +4,9 @@ Verifies USDC / WETH / USDT / DAI / exotic pool detection per the Base-chain
 quote-token distribution (roughly USDC ~30%, WETH ~60%, exotic ~10%).
 """
 
-from onchain_platform.analytics.pool_classifier import (
-    QuoteTokenType,
-    classify_pool,
-)
+from onchain_platform.analytics.pool_classifier import classify_pool
+from onchain_platform.domain.interfaces.price_oracle import PoolClassification
+from onchain_platform.domain.schemas.enums import QuoteTokenType
 
 # Canonical addresses (Base chain).
 USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
@@ -19,7 +18,7 @@ TOKEN_B = "0x2222222222222222222222222222222222222222"
 POOL = "0x9999999999999999999999999999999999999999"
 
 
-def _classify(t0: str, t1: str):
+def _classify(t0: str, t1: str) -> PoolClassification:
     return classify_pool(POOL, t0, t1)
 
 

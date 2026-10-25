@@ -170,10 +170,19 @@ async def test_snapshot_job_populates_liquidity_usd_with_oracle(
     await state_cache.save_state(redis_client, proj)
 
     # Fake oracle with get_pool_result that returns a STATIC USDC quote.
-    from onchain_platform.domain.interfaces.price_oracle import PriceResult, PriceSource
+    from onchain_platform.domain.interfaces.price_oracle import (
+        PoolClassification,
+        PriceResult,
+        PriceSource,
+    )
 
     class FakeOracle:
-        async def get_pool_result(self, reserves, pool_class, as_of):
+        async def get_pool_result(
+            self,
+            reserves: tuple[str, str],
+            pool_class: PoolClassification,
+            as_of: datetime,
+        ) -> PriceResult:
             assert pool_class.quote_token_type.value == "USDC"
             return PriceResult(
                 price_usd=Decimal("1.0"),

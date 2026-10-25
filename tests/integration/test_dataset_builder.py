@@ -40,7 +40,7 @@ CREATED = datetime(2024, 4, 22, 12, 0, 0, tzinfo=UTC)
 EVAL_T = CREATED + timedelta(hours=1)  # 1h window closure
 
 
-async def _seed_pair(session) -> None:
+async def _seed_pair(session: AsyncSession) -> None:
     await er.save_token(
         session,
         Token(
@@ -72,7 +72,7 @@ async def _seed_pair(session) -> None:
     )
 
 
-async def _seed_outcome(session, *, label: bool, eval_t: datetime) -> None:
+async def _seed_outcome(session: AsyncSession, *, label: bool, eval_t: datetime) -> None:
     await oi.save_outcome(
         session,
         Outcome.create(

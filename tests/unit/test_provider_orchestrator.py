@@ -55,7 +55,7 @@ def _config(specs: list[ProviderSpec]) -> ChainProviderConfig:
 def test_rate_limiter_capacity() -> None:
     limiter = TokenBucketRateLimiter(rate_per_second=1000, capacity=100)
     # First capacity acquisitions are instant (tokens preloaded).
-    assert limiter._tokens == 100  # type: ignore[attr-defined]
+    assert limiter._tokens == 100
 
 
 # --- Health checker ---
@@ -79,7 +79,7 @@ def test_health_checker_marks_healthy_resets() -> None:
     assert checker.is_healthy("a") is False
     checker.mark_healthy("a")
     assert checker.is_healthy("a") is True
-    assert checker._consecutive_failures["a"] == 0  # type: ignore[attr-defined]
+    assert checker._consecutive_failures["a"] == 0
 
 
 def test_health_checker_recovery_due_when_never_unhealthy() -> None:

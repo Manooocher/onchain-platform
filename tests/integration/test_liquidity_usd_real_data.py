@@ -10,15 +10,19 @@ ETH cache. Skips cleanly when the public RPC or a known pool is unreachable.
 """
 
 import os
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from onchain_platform.acquisition.providers.local_node import LocalNodeProvider
 
 pytestmark = pytest.mark.live
 
 _RPC = os.environ.get("RPC_URL", "https://mainnet.base.org")
 
 
-def _live_rpc():
+def _live_rpc() -> "LocalNodeProvider":
     from onchain_platform.acquisition.providers.local_node import LocalNodeProvider
 
     return LocalNodeProvider(_RPC)
