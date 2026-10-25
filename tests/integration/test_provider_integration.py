@@ -10,10 +10,15 @@ These require provider API keys set in the environment (see .env.example).
 """
 
 import os
+from collections.abc import Sequence
 
 import pytest
 
-from onchain_platform.acquisition.providers.base import BlockchainProvider
+from onchain_platform.acquisition.providers.base import (
+    BlockchainProvider,
+    BlockMetadata,
+    RawLog,
+)
 from onchain_platform.acquisition.providers.factory import create_provider
 from onchain_platform.acquisition.providers.health_checker import (
     ProviderHealthChecker,
@@ -45,10 +50,16 @@ class _FailingPrimary(BlockchainProvider):
     async def get_chain_head(self) -> int:
         raise AcquisitionError("primary down")
 
-    async def get_block_metadata(self, block_number: int):  # pragma: no cover
+    async def get_block_metadata(self, block_number: int) -> BlockMetadata:  # pragma: no cover
         raise AcquisitionError("primary down")
 
-    async def get_logs(self, from_block, to_block, address=None, topics=None):  # pragma: no cover
+    async def get_logs(
+        self,
+        from_block: int,
+        to_block: int,
+        address: str | None = None,
+        topics: Sequence[str] | None = None,
+    ) -> list[RawLog]:  # pragma: no cover
         raise AcquisitionError("primary down")
 
     async def close(self) -> None:

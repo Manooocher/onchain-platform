@@ -5,6 +5,7 @@ main.py) actually produces and persists Features against real TimescaleDB
 snapshot data. This exercises the same code path the scheduler calls.
 """
 
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
@@ -34,7 +35,9 @@ def _snap(ts: datetime, r0: str, r1: str) -> ObservationSnapshot:
 
 
 async def test_feature_computed_from_real_snapshots(
-    pg_engine: AsyncEngine, clean_entities, clean_facts
+    pg_engine: AsyncEngine,
+    clean_entities: Callable[[], Awaitable[None]],
+    clean_facts: Callable[[], Awaitable[None]],
 ) -> None:
     await clean_entities()
     async with AsyncSession(pg_engine, expire_on_commit=False) as session:
@@ -54,7 +57,9 @@ async def test_feature_computed_from_real_snapshots(
 
 
 async def test_feature_engine_wired_matches_scheduler_path(
-    pg_engine: AsyncEngine, clean_entities, clean_facts
+    pg_engine: AsyncEngine,
+    clean_entities: Callable[[], Awaitable[None]],
+    clean_facts: Callable[[], Awaitable[None]],
 ) -> None:
     """The feature engine's public entry is what main.py's job calls — this
     guards that the scheduled producer and the test path are the same fn."""

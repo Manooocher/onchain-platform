@@ -24,13 +24,13 @@ def test_alchemy_is_http_json_rpc_provider() -> None:
     p = AlchemyProvider("https://x/v2/key", ws_url="wss://x/v2/key")
     assert isinstance(p, HttpJsonRpcProvider)
     assert isinstance(p, BlockchainProvider)
-    assert p._ws_url == "wss://x/v2/key"  # type: ignore[attr-defined]
+    assert p._ws_url == "wss://x/v2/key"
 
 
 def test_quiknode_subclasses_base_and_drops_ws() -> None:
     p = QuickNodeProvider("https://q.example/")
     assert isinstance(p, HttpJsonRpcProvider)
-    assert p._ws_url is None  # type: ignore[attr-defined]
+    assert p._ws_url is None
 
 
 def test_all_providers_verify_tls() -> None:
@@ -46,7 +46,7 @@ def test_all_providers_verify_tls() -> None:
     ]
     for p in providers:
         assert isinstance(p, BlockchainProvider)
-        assert p._verify_tls is True  # type: ignore[attr-defined]
+        assert p._verify_tls is True
 
 
 def test_factory_maps_types() -> None:
@@ -78,23 +78,22 @@ def test_factory_unknown_type_raises() -> None:
         create_provider(spec)
 
 
-async def _head_with_stub(provider: HttpJsonRpcProvider) -> int:
-    """Call get_chain_head with provider._call stubbed to a known hex."""
+async def _head_with_stub(provider: HttpJsonRpcProvider, monkeypatch: pytest.MonkeyPatch) -> int:
+    """Call get_chain_head with provider._call stubbed to a known hex.
+
+    monkeypatch.setattr auto-restores the original method when the test ends.
+    """
 
     async def _ours(method: str, params: list[Any]) -> str:
         assert method == "eth_blockNumber"
         return hex(50_402_845)
 
-    original = provider._call  # type: ignore[attr-defined]
-    provider._call = _ours  # type: ignore[attr-defined]
-    try:
-        return await provider.get_chain_head()
-    finally:
-        provider._call = original  # type: ignore[attr-defined]
+    monkeypatch.setattr(provider, "_call", _ours)
+    return await provider.get_chain_head()
 
 
 @pytest.mark.asyncio
-async def test_provider_parses_chain_head_hex() -> None:
+async def test_provider_parses_chain_head_hex(monkeypatch: pytest.MonkeyPatch) -> None:
     """get_chain_head parses eth_blockNumber: '0x...' -> int without network."""
     p = AlchemyProvider("https://x/v2/key")
-    assert await _head_with_stub(p) == 50_402_845
+    assert await _head_with_stub(p, monkeypatch) == 50_402_845

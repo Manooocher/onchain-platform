@@ -309,7 +309,7 @@ async def test_job_creates_6_outcomes_for_24h_eligible_pair(
     )
     # 25h of snapshot + bar data (healthy pair).
     async with AsyncSession(pg_engine, expire_on_commit=False) as session:
-        for ts, r0, r1 in [
+        for ts, r0, res1 in [
             (created_25h, "100", "100"),
             (created_25h + timedelta(minutes=30), "100", "100"),
             (NOW - timedelta(hours=2), "100", "100"),
@@ -325,7 +325,7 @@ async def test_job_creates_6_outcomes_for_24h_eligible_pair(
                     ingested_at=ts,
                     source="test",
                     reserve0=r0,
-                    reserve1=r1,
+                    reserve1=res1,
                     price="1",
                 ),
             )
@@ -394,7 +394,7 @@ async def test_window_aware_guard_evaluates_24h_even_when_1h_label_exists(
         clean_facts_fn=clean_facts,
     )
     async with AsyncSession(pg_engine, expire_on_commit=False) as session:
-        for ts, r0, r1 in [
+        for ts, r0, res1 in [
             (created_25h, "100", "100"),
             (NOW - timedelta(minutes=30), "100", "100"),
         ]:
@@ -408,7 +408,7 @@ async def test_window_aware_guard_evaluates_24h_even_when_1h_label_exists(
                     ingested_at=ts,
                     source="test",
                     reserve0=r0,
-                    reserve1=r1,
+                    reserve1=res1,
                     price="1",
                 ),
             )

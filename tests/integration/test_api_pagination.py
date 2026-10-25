@@ -8,7 +8,7 @@ Tests).
 Naming: test_<unit>_<scenario>_<expected_outcome> (DOC-013).
 """
 
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from urllib.parse import quote
 
@@ -219,7 +219,9 @@ async def _wipe(pg_engine: AsyncEngine) -> None:
 
 
 async def test_pairs_pagination_no_duplicate_no_gap(
-    pg_engine: AsyncEngine, clean_entities: Callable, clean_facts: Callable
+    pg_engine: AsyncEngine,
+    clean_entities: Callable[[], Awaitable[None]],
+    clean_facts: Callable[[], Awaitable[None]],
 ) -> None:
     await clean_entities()
     await clean_facts()
@@ -230,7 +232,7 @@ async def test_pairs_pagination_no_duplicate_no_gap(
     cursor: str | None = None
     async with _make_client(pg_engine) as client:
         while True:
-            params = {"limit": 2}
+            params: dict[str, str | int] = {"limit": 2}
             if cursor:
                 params["cursor"] = cursor
             resp = await client.get("/v1/pairs", params=params)
@@ -246,7 +248,9 @@ async def test_pairs_pagination_no_duplicate_no_gap(
 
 
 async def test_bars_pagination_sorted_and_filtered(
-    pg_engine: AsyncEngine, clean_entities: Callable, clean_facts: Callable
+    pg_engine: AsyncEngine,
+    clean_entities: Callable[[], Awaitable[None]],
+    clean_facts: Callable[[], Awaitable[None]],
 ) -> None:
     await clean_entities()
     await clean_facts()
@@ -258,7 +262,7 @@ async def test_bars_pagination_sorted_and_filtered(
     cursor: str | None = None
     async with _make_client(pg_engine) as client:
         while True:
-            params = {"interval": "1h", "limit": 2}
+            params: dict[str, str | int] = {"interval": "1h", "limit": 2}
             if cursor:
                 params["cursor"] = cursor
             resp = await client.get(f"/v1/pairs/{qid}/bars", params=params)
@@ -276,7 +280,9 @@ async def test_bars_pagination_sorted_and_filtered(
 
 
 async def test_snapshots_pagination_sorted(
-    pg_engine: AsyncEngine, clean_entities: Callable, clean_facts: Callable
+    pg_engine: AsyncEngine,
+    clean_entities: Callable[[], Awaitable[None]],
+    clean_facts: Callable[[], Awaitable[None]],
 ) -> None:
     await clean_entities()
     await clean_facts()
@@ -288,7 +294,7 @@ async def test_snapshots_pagination_sorted(
     cursor: str | None = None
     async with _make_client(pg_engine) as client:
         while True:
-            params = {"limit": 2}
+            params: dict[str, str | int] = {"limit": 2}
             if cursor:
                 params["cursor"] = cursor
             resp = await client.get(f"/v1/entities/{qid}/snapshots", params=params)
@@ -305,7 +311,9 @@ async def test_snapshots_pagination_sorted(
 
 
 async def test_facts_pagination_with_type_filter(
-    pg_engine: AsyncEngine, clean_entities: Callable, clean_facts: Callable
+    pg_engine: AsyncEngine,
+    clean_entities: Callable[[], Awaitable[None]],
+    clean_facts: Callable[[], Awaitable[None]],
 ) -> None:
     await clean_entities()
     await clean_facts()
@@ -317,7 +325,7 @@ async def test_facts_pagination_with_type_filter(
     cursor: str | None = None
     async with _make_client(pg_engine) as client:
         while True:
-            params = {"fact_type": "SWAP_EXECUTED", "limit": 2}
+            params: dict[str, str | int] = {"fact_type": "SWAP_EXECUTED", "limit": 2}
             if cursor:
                 params["cursor"] = cursor
             resp = await client.get(f"/v1/pairs/{qid}/facts", params=params)
@@ -334,7 +342,9 @@ async def test_facts_pagination_with_type_filter(
 
 
 async def test_wallet_activity_pagination(
-    pg_engine: AsyncEngine, clean_entities: Callable, clean_facts: Callable
+    pg_engine: AsyncEngine,
+    clean_entities: Callable[[], Awaitable[None]],
+    clean_facts: Callable[[], Awaitable[None]],
 ) -> None:
     await clean_entities()
     await clean_facts()
@@ -346,7 +356,7 @@ async def test_wallet_activity_pagination(
     cursor: str | None = None
     async with _make_client(pg_engine) as client:
         while True:
-            params = {"limit": 5}
+            params: dict[str, str | int] = {"limit": 5}
             if cursor:
                 params["cursor"] = cursor
             resp = await client.get(f"/v1/wallets/{wid}/activity", params=params)

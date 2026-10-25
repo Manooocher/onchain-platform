@@ -36,7 +36,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import redis.asyncio as redis
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 
 from onchain_platform.acquisition.providers.multi_price_oracle import MultiPriceOracle
 from onchain_platform.analytics import feature_engine, outcome_job, projection_engine, snapshot_job
@@ -44,6 +44,7 @@ from onchain_platform.analytics.pool_classifier import classify_pool
 from onchain_platform.analytics.trade_aggregator import aggregate_swaps_to_bar, bucket_start
 from onchain_platform.domain.money import decimal_to_plain_string
 from onchain_platform.domain.schemas.blockchain_fact import (
+    BlockchainFact,
     LiquidityAddedPayload,
     LiquidityRemovedPayload,
     SwapExecutedPayload,
@@ -76,13 +77,15 @@ def _clock() -> datetime:
     return datetime.now(UTC)
 
 
-async def rebuild_state(engine, redis_client, chain_id: int) -> int:
+async def rebuild_state(engine: AsyncEngine, redis_client: redis.Redis, chain_id: int) -> int:
     async with AsyncSession(engine, expire_on_commit=False) as session:
         await projection_engine.rebuild_from_facts(session, redis_client, chain_id, _clock)
     return 0
 
 
-async def _pair_swap_facts(session, chain_id: int, pool_address: str, fact_type: FactType):
+async def _pair_swap_facts(
+    session: AsyncSession, chain_id: int, pool_address: str, fact_type: FactType
+) -> list[BlockchainFact]:
     """All FINALIZED facts of `fact_type` for one pool, PIT-ordered."""
     facts, _ = await fact_repos.list_facts_for_pair(
         session,
@@ -96,7 +99,10 @@ async def _pair_swap_facts(session, chain_id: int, pool_address: str, fact_type:
 
 
 async def backfill_market_bars(
-    engine, redis_client, chain_id: int, intervals: tuple[BarInterval, ...]
+    engine: AsyncEngine,
+    redis_client: redis.Redis | None,
+    chain_id: int,
+    intervals: tuple[BarInterval, ...],
 ) -> int:
     """Generate OHLCV bars from FINALIZED SWAP_EXECUTED facts for every pair.
 
@@ -117,7 +123,7 @@ async def backfill_market_bars(
             # Bucket the pair's swaps into each interval's bars, grouping facts
             # that fall in the same bucket so each bar aggregates its own set.
             for interval in intervals:
-                buckets: dict[datetime, list] = {}
+                buckets: dict[datetime, list[BlockchainFact]] = {}
                 for fact in swaps:
                     bstart = bucket_start(fact.event_time, interval)
                     buckets.setdefault(bstart, []).append(fact)
@@ -141,7 +147,7 @@ async def backfill_market_bars(
     return bars_written
 
 
-def _apply_reserve_delta(r0: Decimal, r1: Decimal, payload) -> tuple[Decimal, Decimal]:
+def _apply_reserve_delta(r0: Decimal, r1: Decimal, payload: object) -> tuple[Decimal, Decimal]:
     """Mirror of projection_engine.update_projection's reserve deltas (the
     single source of truth for reserve math) applied to an in-memory (r0, r1).
 
@@ -167,7 +173,7 @@ def _apply_reserve_delta(r0: Decimal, r1: Decimal, payload) -> tuple[Decimal, De
 
 
 async def _reserves_at(
-    session, chain_id: int, pool_address: str, as_of: datetime
+    session: AsyncSession, chain_id: int, pool_address: str, as_of: datetime
 ) -> tuple[Decimal, Decimal]:
     """Reserves for a pool at/just-before as_of by replaying FINALIZED
     liquidity-affecting facts with event_time <= as_of (PIT)."""
@@ -182,8 +188,8 @@ async def _reserves_at(
 
 
 async def backfill_historical_snapshots(
-    engine,
-    redis_client,
+    engine: AsyncEngine,
+    redis_client: redis.Redis | None,
     chain_id: int,
     offsets_min: tuple[int, ...],
     oracle: MultiPriceOracle | None = None,
@@ -249,7 +255,9 @@ async def backfill_historical_snapshots(
     return written
 
 
-async def compute_features(engine, redis_client, chain_id: int) -> int:
+async def compute_features(
+    engine: AsyncEngine, redis_client: redis.Redis | None, chain_id: int
+) -> int:
     """Compute all 5 features for every pair, at each historical snapshot
     timestamp (Bug 2 — time alignment).
 
@@ -298,7 +306,9 @@ async def compute_features(engine, redis_client, chain_id: int) -> int:
     return created
 
 
-async def evaluate_outcomes(engine, redis_client, chain_id: int) -> tuple[int, int, int]:
+async def evaluate_outcomes(
+    engine: AsyncEngine, redis_client: redis.Redis, chain_id: int
+) -> tuple[int, int, int]:
     return await outcome_job.run_outcome_evaluation(engine, _clock)
 
 
@@ -312,7 +322,7 @@ async def post_process(
     ),
     offsets_min: tuple[int, ...] = (5, 10, 30, 60, 360, 1440),
     eth_price_usd: Decimal = _DEFAULT_ETH_USD,
-) -> dict:
+) -> dict[str, object]:
     dsn = os.environ.get("POSTGRES_DSN", _DEFAULT_DSN)
     redis_url = os.environ.get("REDIS_URL", _DEFAULT_REDIS)
     engine = create_async_engine(dsn)
@@ -321,7 +331,7 @@ async def post_process(
     # USDC/stablecoin (STATIC) and WETH (configurable CHAINLINK ETH price);
     # exotic pools get NULL (honest).
     oracle = MultiPriceOracle(r, eth_price_provider=StaticEthPriceProvider(eth_price_usd))
-    report: dict = {}
+    report: dict[str, object] = {}
     try:
         print("[post-process] 1/5 rebuilding state projections...")
         report["state_rebuilt"] = True
