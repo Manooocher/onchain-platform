@@ -57,7 +57,10 @@ env/
 .cursorrules
 .aider*
 .continue/
-.claude/
+# Claude Code config is committed (reproducible agents/skills/rules/hooks);
+# only machine-local settings stay out (S0-8, ADR-009).
+.claude/settings.local.json
+.claude/settings.local.json.tmp.*
 AUDIT_REPORT*.md
 # Local runtime state for phase-0 chunked historical cohort ingestion
 # (scripts/chunked_ingestion.py). Never committed — it is per-session progress.

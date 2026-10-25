@@ -35,7 +35,6 @@ class ProviderSpec:
     ws_url: str | None
     rate_limit_per_second: int
     priority: int
-    requires_ssl_no_revoke: bool = False
 
 
 @dataclass(frozen=True)
@@ -69,7 +68,6 @@ def _spec_from_yaml(entry: dict[str, object]) -> ProviderSpec:
     url_template = _as_str(entry, "url_template")
     rate_limit = int(_as_str(entry, "rate_limit_per_second") or 0)
     priority = int(_as_str(entry, "priority") or 99)
-    ssl_no_revoke = bool(_as_bool(entry, "requires_ssl_no_revoke"))
 
     fields: dict[str, str] = {}
 
@@ -95,7 +93,6 @@ def _spec_from_yaml(entry: dict[str, object]) -> ProviderSpec:
         ws_url=ws_url,
         rate_limit_per_second=rate_limit,
         priority=priority,
-        requires_ssl_no_revoke=ssl_no_revoke,
     )
 
 
@@ -105,15 +102,6 @@ def _as_str(entry: dict[str, object], key: str) -> str:
     if value is None:
         return ""
     return str(value)
-
-
-def _as_bool(entry: dict[str, object], key: str) -> bool:
-    value = entry.get(key)
-    if isinstance(value, bool):
-        return value
-    if value is None:
-        return False
-    return str(value).lower() == "true"
 
 
 def _required_env(provider_name: str, env: str) -> str:

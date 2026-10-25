@@ -45,7 +45,6 @@ base:
     api_key_env: "ROCKX_BASE_API_KEY"
     rate_limit_per_second: 25
     priority: 3
-    requires_ssl_no_revoke: true
   failover:
     strategy: "priority_with_health_check"
     health_check_interval_seconds: 30
@@ -77,7 +76,6 @@ def test_load_provider_config_resolves_placeholders(
     assert cfg.providers[1].url == "https://thumb-bubble-1.base-mainnet.quiknode.pro/qn_test/"
     # rate limit + typed.
     assert cfg.providers[0].rate_limit_per_second == 660
-    assert cfg.providers[2].requires_ssl_no_revoke is True
     # failover settings.
     assert cfg.strategy == "priority_with_health_check"
     assert cfg.health_check_interval_seconds == 30
